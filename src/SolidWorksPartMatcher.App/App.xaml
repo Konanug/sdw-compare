@@ -1,0 +1,100 @@
+<Application x:Class="SolidWorksPartMatcher.App.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:sys="clr-namespace:System;assembly=mscorlib"
+             ShutdownMode="OnLastWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+
+            <!-- ── Converters ─────────────────────────────────────────────── -->
+            <BooleanToVisibilityConverter x:Key="BoolVis"/>
+
+            <!-- Negates bool: true→false, false→true.  Used for IsEnabled. -->
+            <Style x:Key="NegateBool" TargetType="FrameworkElement"/>
+            <!-- Inline negate via data-trigger on the consuming control works
+                 without a dedicated converter: just check IsRunning=True → Disabled.
+                 A real converter is below for cases where a property is needed. -->
+
+            <!-- ── Global control styles ──────────────────────────────────── -->
+            <Style TargetType="TextBlock">
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="FontSize"   Value="13"/>
+            </Style>
+
+            <Style TargetType="Button">
+                <Setter Property="Padding"  Value="8,4"/>
+                <Setter Property="Margin"   Value="2"/>
+                <Setter Property="MinWidth" Value="0"/>
+                <Setter Property="FontFamily" Value="Segoe UI"/>
+                <Setter Property="FontSize"   Value="13"/>
+                <Setter Property="FocusVisualStyle">
+                    <Setter.Value>
+                        <Style>
+                            <Setter Property="Control.Template">
+                                <Setter.Value>
+                                    <ControlTemplate>
+                                        <Rectangle StrokeDashArray="1 2" Stroke="#FF000000"
+                                                   SnapsToDevicePixels="True" Margin="2"/>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Compact action button (no min-width, small padding) -->
+            <Style x:Key="ActionBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                <Setter Property="Padding"   Value="6,2"/>
+                <Setter Property="Margin"    Value="2,0"/>
+                <Setter Property="MinHeight" Value="22"/>
+            </Style>
+
+            <!-- Icon-only action button (⋮ menu trigger) -->
+            <Style x:Key="IconBtn" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+                <Setter Property="Padding"   Value="4,0"/>
+                <Setter Property="Margin"    Value="2,0"/>
+                <Setter Property="MinWidth"  Value="24"/>
+                <Setter Property="MinHeight" Value="22"/>
+                <Setter Property="FontSize"  Value="15"/>
+            </Style>
+
+            <!-- ── TreeView / group item styles ──────────────────────────── -->
+
+            <!-- Override system selection brushes so text stays dark when a row
+                 is selected.  Without this, WPF sets foreground to white on the
+                 active-selection highlight, making text unreadable. -->
+            <Style TargetType="TreeViewItem">
+                <Style.Resources>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightBrushKey}"
+                                     Color="#CFE2F3"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.HighlightTextBrushKey}"
+                                     Color="#212121"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightBrushKey}"
+                                     Color="#E8E8E8"/>
+                    <SolidColorBrush x:Key="{x:Static SystemColors.InactiveSelectionHighlightTextBrushKey}"
+                                     Color="#212121"/>
+                </Style.Resources>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Padding"                    Value="4,2"/>
+                <Setter Property="IsExpanded"                 Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                <Setter Property="AutomationProperties.Name"  Value="{Binding AutomationName}"/>
+                <Setter Property="FocusVisualStyle">
+                    <Setter.Value>
+                        <Style>
+                            <Setter Property="Control.Template">
+                                <Setter.Value>
+                                    <ControlTemplate>
+                                        <Rectangle StrokeDashArray="1 2" Stroke="#FF000000"
+                                                   SnapsToDevicePixels="True" Margin="1"/>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

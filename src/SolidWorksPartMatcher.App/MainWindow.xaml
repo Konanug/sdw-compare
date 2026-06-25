@@ -1,0 +1,403 @@
+<Window x:Class="SolidWorksPartMatcher.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:SolidWorksPartMatcher.App.ViewModels"
+        Title="SolidWorks Part Matcher" Height="720" Width="1100"
+        WindowStartupLocation="CenterScreen" FontFamily="Segoe UI" FontSize="13">
+
+    <Window.Resources>
+        <!-- Row background colour driven by review status, not classification. -->
+        <SolidColorBrush x:Key="Clr.Default" Color="#F5F5F5"/>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="260" MinWidth="160"/>
+            <ColumnDefinition Width="4"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ── Left panel: folder management ─────────────────────────────── -->
+        <Border Grid.Column="0" BorderBrush="#DDD" BorderThickness="0,0,1,0" Padding="8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Top" Text="Source Folders"
+                           FontWeight="SemiBold" FontSize="14" Margin="0,4,0,8"/>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6">
+                    <Button Content="Add Folder"  Command="{Binding AddFolderCommand}" Style="{StaticResource ActionBtn}"/>
+                    <Button Content="Remove"      Style="{StaticResource ActionBtn}"
+                            Command="{Binding RemoveFolderCommand}"
+                            CommandParameter="{Binding ElementName=FolderList, Path=SelectedItem}"/>
+                </StackPanel>
+                <ListBox x:Name="FolderList" ItemsSource="{Binding FolderPaths}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                         AutomationProperties.Name="Source folders"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Grid splitter -->
+        <GridSplitter Grid.Column="1" Width="4" HorizontalAlignment="Stretch"
+                      Background="#DDD" Cursor="SizeWE"/>
+
+        <!-- ── Right panel ────────────────────────────────────────────────── -->
+        <Grid Grid.Column="2" Margin="8,4,8,4">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto"/>   <!-- toolbar -->
+                <RowDefinition Height="Auto"/>   <!-- progress -->
+                <RowDefinition Height="Auto"/>   <!-- status -->
+                <RowDefinition Height="Auto"/>   <!-- filter bar -->
+                <RowDefinition Height="*"/>      <!-- results -->
+                <RowDefinition Height="Auto"/>   <!-- footer -->
+            </Grid.RowDefinitions>
+
+            <!-- ── Toolbar ──────────────────────────────────────────────── -->
+            <ToolBar Grid.Row="0" Margin="0,0,0,4" ToolBarTray.IsLocked="True">
+                <Button Content="▶  Start Scan" Command="{Binding StartScanCommand}"
+                        FontSize="14" Padding="12,5"
+                        AutomationProperties.Name="Start scan"/>
+                <Button Content="⏹  Cancel"    Command="{Binding CancelScanCommand}"
+                        AutomationProperties.Name="Cancel scan"/>
+                <Separator/>
+                <Button Content="📊  Export All"     Command="{Binding ExportAllCommand}"
+                        ToolTip="Export all scan results to Excel"
+                        AutomationProperties.Name="Export all results to Excel"/>
+                <Button Content="📊  Export Visible" Command="{Binding ExportVisibleCommand}"
+                        ToolTip="Export only the groups visible under the current filters"
+                        AutomationProperties.Name="Export visible results to Excel"/>
+            </ToolBar>
+
+            <!-- ── Progress ─────────────────────────────────────────────── -->
+            <ProgressBar Grid.Row="1" Height="6" Margin="0,0,0,4"
+                         Value="{Binding ProgressValue}" Maximum="{Binding ProgressMax}"
+                         Visibility="{Binding IsScanning, Converter={StaticResource BoolVis}}"
+                         AutomationProperties.Name="Scan progress"/>
+
+            <!-- ── Status text ───────────────────────────────────────────── -->
+            <TextBlock Grid.Row="2" Text="{Binding StatusText}"
+                       TextWrapping="Wrap" Margin="0,0,0,6" Foreground="#333"
+                       AutomationProperties.LiveSetting="Polite"/>
+
+            <!-- ── Filter bar ────────────────────────────────────────────── -->
+            <Grid Grid.Row="3" Margin="0,0,0,6">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="190"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="130"/>
+                    <ColumnDefinition Width="8"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- Search box with placeholder -->
+                <Grid Grid.Column="0">
+                    <TextBox x:Name="SearchBox"
+                             Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}"
+                             Padding="4,3"
+                             AutomationProperties.Name="Search by filename, path, or canonical name"
+                             ToolTip="Search by filename, folder path, or canonical name"/>
+                    <TextBlock Text="Search by filename, path, or name…"
+                               Foreground="#AAA" Margin="6,0,0,0"
+                               VerticalAlignment="Center" IsHitTestVisible="False">
+                        <TextBlock.Style>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ElementName=SearchBox, Path=Text.Length}" Value="0">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </TextBlock.Style>
+                    </TextBlock>
+                </Grid>
+
+                <!-- Classification filter -->
+                <ComboBox Grid.Column="2"
+                          ItemsSource="{Binding ClassificationOptions}"
+                          SelectedItem="{Binding SelectedClassificationOption}"
+                          DisplayMemberPath="Label"
+                          AutomationProperties.Name="Filter by classification"
+                          ToolTip="Filter by match classification"/>
+
+                <!-- Review-status filter -->
+                <ComboBox Grid.Column="4"
+                          ItemsSource="{Binding ReviewStatusOptions}"
+                          SelectedItem="{Binding SelectedReviewStatusOption}"
+                          DisplayMemberPath="Label"
+                          AutomationProperties.Name="Filter by review status"
+                          ToolTip="Filter by review status"/>
+
+                <Button Grid.Column="6" Content="Expand All"   Style="{StaticResource ActionBtn}"
+                        Command="{Binding ExpandAllCommand}"
+                        AutomationProperties.Name="Expand all groups"/>
+                <Button Grid.Column="7" Content="Collapse All" Style="{StaticResource ActionBtn}"
+                        Command="{Binding CollapseAllCommand}"
+                        AutomationProperties.Name="Collapse all groups"/>
+                <Button Grid.Column="8" Content="Clear"        Style="{StaticResource ActionBtn}"
+                        Command="{Binding ClearFiltersCommand}"
+                        ToolTip="Clear search text and all filters"
+                        AutomationProperties.Name="Clear all filters"/>
+            </Grid>
+
+            <!-- ── Results area ──────────────────────────────────────────── -->
+            <Grid Grid.Row="4">
+
+                <!-- Empty states (shown when results area is empty) -->
+                <TextBlock Text="Add folders and click Start Scan to begin."
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="#888" FontSize="14"
+                           AutomationProperties.LiveSetting="Polite">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ShowNoScanState}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <TextBlock Text="Scan complete — no match groups found."
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="#888" FontSize="14">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ShowNoMatchesState}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <TextBlock Text="No groups match the current filters.  Click Clear to reset."
+                           HorizontalAlignment="Center" VerticalAlignment="Center"
+                           Foreground="#888" FontSize="14">
+                    <TextBlock.Style>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding ShowNoFilterResultsState}" Value="True">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </TextBlock.Style>
+                </TextBlock>
+
+                <!-- ── Main results TreeView ─────────────────────────────── -->
+                <TreeView ItemsSource="{Binding FilteredGroups}"
+                          VirtualizingPanel.IsVirtualizing="True"
+                          VirtualizingPanel.VirtualizationMode="Recycling"
+                          ScrollViewer.CanContentScroll="True"
+                          BorderBrush="#CCC" BorderThickness="1"
+                          AutomationProperties.Name="Match results">
+
+                    <!-- Group container style — binds IsExpanded two-way. -->
+                    <TreeView.ItemContainerStyle>
+                        <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
+                            <Setter Property="IsExpanded"
+                                    Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                            <Setter Property="AutomationProperties.Name"
+                                    Value="{Binding AutomationName}"/>
+                        </Style>
+                    </TreeView.ItemContainerStyle>
+
+                    <TreeView.ItemTemplate>
+                        <HierarchicalDataTemplate DataType="{x:Type vm:MatchGroupViewModel}"
+                                                  ItemsSource="{Binding Files}">
+
+                            <!-- ── Group header row ──────────────────────── -->
+                            <!-- Full-width border gives each group a coloured header with
+                                 a bottom separator line. Padding is inside so the line
+                                 runs edge-to-edge. -->
+                            <Border Background="{Binding HeaderBackground}"
+                                    BorderBrush="#BDBDBD" BorderThickness="0,0,0,1"
+                                    Padding="4,5,4,5">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="140"/>
+                                        <ColumnDefinition Width="240"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- "Match N" + part-count badge -->
+                                    <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                                VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding DisplayName}"
+                                                   FontWeight="SemiBold"/>
+                                        <Border Margin="7,0,0,0" Background="#00000020"
+                                                CornerRadius="8" Padding="6,1"
+                                                VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding FileCountLabel}"
+                                                       FontSize="11" Foreground="#444"/>
+                                        </Border>
+                                    </StackPanel>
+
+                                    <!-- Classification label -->
+                                    <TextBlock Grid.Column="1"
+                                               Text="{Binding ClassificationLabel}"
+                                               Foreground="#444" VerticalAlignment="Center"/>
+
+                                    <!-- Canonical name (only when set) -->
+                                    <TextBlock Grid.Column="2"
+                                               Text="{Binding CanonicalName}"
+                                               Foreground="#555" FontStyle="Italic"
+                                               VerticalAlignment="Center"
+                                               TextTrimming="CharacterEllipsis">
+                                        <TextBlock.Style>
+                                            <Style TargetType="TextBlock">
+                                                <Setter Property="Visibility" Value="Visible"/>
+                                                <Style.Triggers>
+                                                    <DataTrigger Binding="{Binding CanonicalName}" Value="{x:Null}">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                    <DataTrigger Binding="{Binding CanonicalName}" Value="">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                    </DataTrigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </TextBlock.Style>
+                                    </TextBlock>
+
+                                    <!-- ⋮ action menu -->
+                                    <Button Grid.Column="3"
+                                            Content="⋮"
+                                            Style="{StaticResource IconBtn}"
+                                            Tag="{Binding}"
+                                            ToolTip="Group actions"
+                                            AutomationProperties.Name="Group actions menu"
+                                            Click="GroupActionsButton_Click">
+                                        <Button.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem Header="Open All in SOLIDWORKS"
+                                                          Command="{Binding PlacementTarget.Tag.OpenAllCommand,
+                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                <Separator/>
+                                                <MenuItem Header="Approve"
+                                                          Command="{Binding PlacementTarget.Tag.ApproveCommand,
+                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                <MenuItem Header="Reject"
+                                                          Command="{Binding PlacementTarget.Tag.RejectCommand,
+                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                <MenuItem Header="Reset to Pending"
+                                                          Command="{Binding PlacementTarget.Tag.ResetStatusCommand,
+                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                <MenuItem Header="Rename / Edit Name…"
+                                                          Command="{Binding PlacementTarget.Tag.EditCanonicalNameCommand,
+                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                                <Separator/>
+                                                <MenuItem Header="View Details"
+                                                          Command="{Binding PlacementTarget.Tag.ViewDetailsCommand,
+                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
+                                            </ContextMenu>
+                                        </Button.ContextMenu>
+                                    </Button>
+                                </Grid>
+                            </Border>
+
+                            <!-- ── Child file rows ───────────────────────── -->
+                            <!-- Each row uses identical fixed column widths so
+                                 filenames, config badges, and buttons are vertically
+                                 aligned across all rows within a group. A bottom
+                                 border visually separates individual files. -->
+                            <HierarchicalDataTemplate.ItemTemplate>
+                                <DataTemplate DataType="{x:Type vm:MatchFileViewModel}">
+                                    <Border BorderBrush="#E0E0E0" BorderThickness="0,0,0,1"
+                                            Padding="4,4,4,4">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="80"/>
+                                                <ColumnDefinition Width="160"/>
+                                                <ColumnDefinition Width="110"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Filename -->
+                                            <StackPanel Grid.Column="0" Orientation="Vertical"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding FileName}"
+                                                           ToolTip="{Binding FullPath}"
+                                                           TextTrimming="CharacterEllipsis"
+                                                           VerticalAlignment="Center"/>
+                                                <!-- Error (only when set) -->
+                                                <TextBlock Text="{Binding OpenError}"
+                                                           Foreground="Red" FontSize="11"
+                                                           TextWrapping="Wrap"
+                                                           ToolTip="{Binding OpenError}">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding OpenError}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                                <DataTrigger Binding="{Binding OpenError}" Value="">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+
+                                            <!-- Config badge -->
+                                            <Border Grid.Column="1"
+                                                    Background="#EEE" CornerRadius="2" Padding="4,1"
+                                                    VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                    Visibility="{Binding HasNonDefaultConfig,
+                                                                         Converter={StaticResource BoolVis}}">
+                                                <TextBlock Text="{Binding ConfigurationName}"
+                                                           FontSize="11" Foreground="#555"/>
+                                            </Border>
+
+                                            <!-- Open in SOLIDWORKS -->
+                                            <Button Grid.Column="2"
+                                                    HorizontalAlignment="Left"
+                                                    Command="{Binding OpenInSolidWorksCommand}"
+                                                    AutomationProperties.Name="{Binding OpenSwAutomationName}"
+                                                    ToolTip="{Binding FullPath}">
+                                                <Button.Style>
+                                                    <Style TargetType="Button" BasedOn="{StaticResource ActionBtn}">
+                                                        <Setter Property="Content" Value="Open in SOLIDWORKS"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding OpenInSolidWorksCommand.IsRunning}" Value="True">
+                                                                <Setter Property="Content"   Value="Opening…"/>
+                                                                <Setter Property="IsEnabled" Value="False"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Button.Style>
+                                            </Button>
+
+                                            <!-- Open Folder -->
+                                            <Button Grid.Column="3"
+                                                    Content="Open Folder"
+                                                    HorizontalAlignment="Left"
+                                                    Style="{StaticResource ActionBtn}"
+                                                    Command="{Binding OpenFolderCommand}"
+                                                    AutomationProperties.Name="{Binding OpenFolderAutomationName}"
+                                                    ToolTip="{Binding FullPath}"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </HierarchicalDataTemplate.ItemTemplate>
+
+                        </HierarchicalDataTemplate>
+                    </TreeView.ItemTemplate>
+                </TreeView>
+            </Grid>
+
+            <!-- ── Footer ────────────────────────────────────────────────── -->
+            <TextBlock Grid.Row="5" Text="{Binding ScanStage}"
+                       Foreground="Gray" FontSize="11" Margin="0,4,0,0"/>
+        </Grid>
+    </Grid>
+</Window>

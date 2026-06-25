@@ -1,0 +1,13 @@
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.userprefs
+*.DS_Store
+*.db
+*.db-shm
+*.db-wal
+*.xlsx
+publish/
+.claude/
