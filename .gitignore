@@ -11,3 +11,5 @@ obj/
 *.xlsx
 publish/
 .claude/
+TestResults/
+*.log
