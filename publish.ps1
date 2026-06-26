@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Publishes SolidWorks Part Matcher as a self-contained Windows x64 release
+    Publishes SolidWorks Part Matcher as a single-file self-contained Windows x64 release
     and zips the output for distribution.
 
 .PARAMETER Version
@@ -18,7 +18,7 @@
 
     Target machine requirements:
       - Windows 10/11 x64
-      - SolidWorks 2016 or later, licensed
+      - SolidWorks 2024, licensed
       - No .NET runtime needed (bundled in the output)
 #>
 param(
@@ -48,7 +48,7 @@ if (Test-Path $outDir) {
     Remove-Item $outDir -Recurse -Force
 }
 
-Write-Host "Running dotnet publish..." -ForegroundColor Yellow
+Write-Host "Running dotnet publish (single-file)..." -ForegroundColor Yellow
 
 & $dotnet publish $project `
     --configuration Release `
@@ -57,8 +57,8 @@ Write-Host "Running dotnet publish..." -ForegroundColor Yellow
     -p:Version=$Version `
     -p:AssemblyVersion="$Version.0" `
     -p:FileVersion="$Version.0" `
-    -p:PublishReadyToRun=true `
-    -p:PublishSingleFile=false `
+    -p:PublishSingleFile=true `
+    -p:IncludeNativeLibrariesForSelfExtract=true `
     -p:PublishTrimmed=false `
     --output $outDir
 
@@ -72,13 +72,8 @@ if (-not (Test-Path $exe)) {
     Write-Error "Expected exe not found: $exe"
 }
 
-# Strip other-platform SQLite native libraries to keep the zip small.
-$runtimesDir = Join-Path $outDir "runtimes"
-if (Test-Path $runtimesDir) {
-    Get-ChildItem $runtimesDir -Directory | Where-Object { $_.Name -ne "win-x64" } | ForEach-Object {
-        Remove-Item $_.FullName -Recurse -Force
-    }
-}
+# Remove debug symbol files — end users don't need them.
+Get-ChildItem $outDir -Filter "*.pdb" | Remove-Item -Force
 
 # Zip the output folder.
 Write-Host ""
@@ -86,14 +81,15 @@ Write-Host "Creating zip..." -ForegroundColor Yellow
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path "$outDir\*" -DestinationPath $zipPath
 
-$zipBytes = (Get-Item $zipPath).Length
-$sizeMB   = [math]::Round($zipBytes / 1048576, 1)
+$fileCount = (Get-ChildItem $outDir -File).Count
+$zipBytes  = (Get-Item $zipPath).Length
+$sizeMB    = [math]::Round($zipBytes / 1048576, 1)
 
 Write-Host ""
 Write-Host "Done." -ForegroundColor Green
-Write-Host "  Publish folder : $outDir"
+Write-Host "  Publish folder : $outDir ($fileCount file(s))"
 Write-Host "  Zip ($sizeMB MB)   : $zipPath"
 Write-Host ""
 Write-Host "Distribute the ZIP. Recipients unzip and run SolidWorksPartMatcher.App.exe."
-Write-Host "Requires: Windows 10/11 x64 + SolidWorks 2016 or later (licensed)."
+Write-Host "Requires: Windows 10/11 x64 + SolidWorks 2024 (licensed)."
 Write-Host ""
