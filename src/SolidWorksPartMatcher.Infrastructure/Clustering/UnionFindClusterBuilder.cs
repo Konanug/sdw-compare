@@ -42,13 +42,17 @@ public sealed class UnionFindClusterBuilder : IClusterBuilder
         //                                  within-tolerance match (Stage 4.5)
         //   GeometryMatchMetadataVariant — same geometry, different material; noted in Excel
         //   RevisionFamily               — closely related revisions (volumetric Jaccard ≥ 0.90)
+        //   MirrorOrHandedVariant        — grouped for review; remains separate from exact clusters
+        //   PossibleMatch                — grouped for review (user must confirm before merge)
         foreach (var pair in pairs)
         {
             if (pair.Classification is PartClassification.BinaryDuplicate
                                     or PartClassification.ExactGeometryMatch
                                     or PartClassification.GeometryMatchMetadataVariant
                                     or PartClassification.EngravingVariant
-                                    or PartClassification.RevisionFamily)
+                                    or PartClassification.RevisionFamily
+                                    or PartClassification.MirrorOrHandedVariant
+                                    or PartClassification.PossibleMatch)
             {
                 Union(pair.FingerprintAId, pair.FingerprintBId);
             }
@@ -113,6 +117,7 @@ public sealed class UnionFindClusterBuilder : IClusterBuilder
         bool hasMetadataVariant = false;
         bool hasEngravingPair = false;
         bool hasRevisionPair = false;
+        bool hasMirrorPair = false;
 
         for (var i = 0; i < members.Count; i++)
         for (var j = i + 1; j < members.Count; j++)
@@ -130,11 +135,14 @@ public sealed class UnionFindClusterBuilder : IClusterBuilder
                 hasEngravingPair = true;
             if (pair.Classification == PartClassification.RevisionFamily)
                 hasRevisionPair = true;
+            if (pair.Classification == PartClassification.MirrorOrHandedVariant)
+                hasMirrorPair = true;
         }
 
         if (hasMetadataVariant) return PartClassification.GeometryMatchMetadataVariant;
         if (hasEngravingPair)   return PartClassification.EngravingVariant;
         if (hasRevisionPair)    return PartClassification.RevisionFamily;
+        if (hasMirrorPair)      return PartClassification.MirrorOrHandedVariant;
         return PartClassification.PossibleMatch;
     }
 }

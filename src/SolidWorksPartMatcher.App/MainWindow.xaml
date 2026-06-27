@@ -320,32 +320,43 @@
                                                 <ColumnDefinition Width="110"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <!-- Filename -->
-                                            <StackPanel Grid.Column="0" Orientation="Vertical"
+                                            <!-- Filename + format badge + error -->
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal"
                                                         VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding FileName}"
-                                                           ToolTip="{Binding FullPath}"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           VerticalAlignment="Center"/>
-                                                <!-- Error (only when set) -->
-                                                <TextBlock Text="{Binding OpenError}"
-                                                           Foreground="Red" FontSize="11"
-                                                           TextWrapping="Wrap"
-                                                           ToolTip="{Binding OpenError}">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding OpenError}" Value="{x:Null}">
-                                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding OpenError}" Value="">
-                                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
+                                                <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding FileName}"
+                                                               ToolTip="{Binding FullPath}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center"/>
+                                                    <!-- Error (only when set) -->
+                                                    <TextBlock Text="{Binding OpenError}"
+                                                               Foreground="Red" FontSize="11"
+                                                               TextWrapping="Wrap"
+                                                               ToolTip="{Binding OpenError}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding OpenError}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding OpenError}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <!-- STEP format badge (hidden for SLDPRT) -->
+                                                <Border Margin="6,0,0,0" Background="#E3F2FD"
+                                                        CornerRadius="2" Padding="4,1"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding IsStepFile,
+                                                                     Converter={StaticResource BoolVis}}">
+                                                    <TextBlock Text="STEP" FontSize="10"
+                                                               Foreground="#1565C0" FontWeight="SemiBold"/>
+                                                </Border>
                                             </StackPanel>
 
                                             <!-- Config badge -->

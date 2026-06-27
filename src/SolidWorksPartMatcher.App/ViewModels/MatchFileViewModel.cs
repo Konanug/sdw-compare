@@ -12,6 +12,10 @@ public sealed partial class MatchFileViewModel : ObservableObject
     public string FileName { get; }
     public string FullPath { get; }
     public string? ConfigurationName { get; }
+    public string SourceFormat { get; }
+
+    public bool IsStepFile =>
+        string.Equals(SourceFormat, "STEP", StringComparison.OrdinalIgnoreCase);
 
     // Shown in the UI when config is not the default.
     public bool HasNonDefaultConfig =>
@@ -34,6 +38,7 @@ public sealed partial class MatchFileViewModel : ObservableObject
         Guid scannedFileId,
         string fullPath,
         string? configurationName,
+        string sourceFormat,
         ISolidWorksFileOpener opener,
         ILogger<MatchFileViewModel> logger)
     {
@@ -41,6 +46,7 @@ public sealed partial class MatchFileViewModel : ObservableObject
         FullPath          = fullPath;
         FileName          = Path.GetFileName(fullPath);
         ConfigurationName = configurationName;
+        SourceFormat      = sourceFormat;
         _opener           = opener;
         _logger           = logger;
 
