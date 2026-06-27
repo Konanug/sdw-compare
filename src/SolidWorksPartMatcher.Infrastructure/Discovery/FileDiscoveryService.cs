@@ -22,7 +22,10 @@ public sealed class FileDiscoveryService(ILogger<FileDiscoveryService> logger) :
             IEnumerable<string> files;
             try
             {
-                files = Directory.EnumerateFiles(root, "*.SLDPRT", SearchOption.AllDirectories);
+                var sldprt = Directory.EnumerateFiles(root, "*.SLDPRT", SearchOption.AllDirectories);
+                var step   = Directory.EnumerateFiles(root, "*.STEP",   SearchOption.AllDirectories);
+                var stp    = Directory.EnumerateFiles(root, "*.STP",    SearchOption.AllDirectories);
+                files = sldprt.Concat(step).Concat(stp);
             }
             catch (Exception ex)
             {

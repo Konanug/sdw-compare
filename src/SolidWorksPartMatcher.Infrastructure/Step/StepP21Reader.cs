@@ -1,0 +1,289 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
+namespace SolidWorksPartMatcher.Infrastructure.Step;
+
+/// <summary>
+/// Minimal P21 (STEP ISO-10303-21) entity reader.
+/// Builds a flat entity dictionary from the DATA section so callers can
+/// resolve entity references and extract typed geometry without a full STEP parser.
+///
+/// Supports the AP214 subset produced by SolidWorks 2024 STEP exports.
+/// </summary>
+internal sealed class StepP21Reader
+{
+    // Raw entity strings: id → text after "#NNN = " and before the terminating ";"
+    private readonly Dictionary<int, string> _raw = new();
+
+    // Detected length unit scale factor: multiply P21 lengths by this to get metres.
+    public double LengthScaleToMetres { get; private set; } = 1e-3; // default: mm
+
+    // ── Factory ────────────────────────────────────────────────────────────
+
+    public static StepP21Reader ParseFile(string path)
+    {
+        var reader = new StepP21Reader();
+        reader.Parse(File.ReadAllText(path));
+        return reader;
+    }
+
+    // ── Low-level entity resolution ────────────────────────────────────────
+
+    public bool TryGetRaw(int id, out string raw) => _raw.TryGetValue(id, out raw!);
+
+    /// <summary>Returns the primary entity type name for entity <paramref name="id"/>.</summary>
+    public string? GetEntityType(int id)
+    {
+        if (!_raw.TryGetValue(id, out var raw)) return null;
+        // Compound: "( TYPE1 ( ) TYPE2 ( ) )" — return all contained type names concatenated
+        // Simple:   "TYPE_NAME ( ... )"
+        var m = Regex.Match(raw, @"^([A-Z][A-Z0-9_]*)");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
+    /// <summary>
+    /// Returns all entity type names present in the raw string for an entity.
+    /// Compound entities (= ( TYPE1 () TYPE2 () )) return multiple names.
+    /// </summary>
+    private IEnumerable<string> GetAllTypesInRaw(string raw)
+        => Regex.Matches(raw, @"\b([A-Z][A-Z0-9_]*)\s*\(").Select(m => m.Groups[1].Value);
+
+    // ── Geometry helpers ───────────────────────────────────────────────────
+
+    /// <summary>Parses a DIRECTION entity → unit vector (NOT scaled — directions are dimensionless).</summary>
+    public bool TryGetDirection(int id, out double[] xyz)
+    {
+        xyz = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw, @"DIRECTION\s*\(\s*'[^']*'\s*,\s*\(\s*([^)]+)\s*\)");
+        if (!m.Success) return false;
+        return TryParseDoubles(m.Groups[1].Value, 3, out xyz);
+    }
+
+    /// <summary>Parses a CARTESIAN_POINT entity → position in metres (scaled by LengthScaleToMetres).</summary>
+    public bool TryGetCartesianPoint(int id, out double[] xyz)
+    {
+        xyz = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw, @"CARTESIAN_POINT\s*\(\s*'[^']*'\s*,\s*\(\s*([^)]+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryParseDoubles(m.Groups[1].Value, 3, out xyz)) return false;
+        for (int i = 0; i < xyz.Length; i++) xyz[i] *= LengthScaleToMetres;
+        return true;
+    }
+
+    /// <summary>
+    /// Parses AXIS2_PLACEMENT_3D entity.
+    /// Returns false when axis or refDir are wildcards (*), indicating a degenerate placement.
+    /// </summary>
+    public bool TryGetAxisPlacement(int id, out double[] origin, out double[] axis, out double[] refDir)
+    {
+        origin = axis = refDir = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"AXIS2_PLACEMENT_3D\s*\(\s*'[^']*'\s*,\s*(#\d+|\*)\s*,\s*(#\d+|\*)\s*,\s*(#\d+|\*)\s*\)");
+        if (!m.Success) return false;
+
+        if (!TryResolveRef(m.Groups[1].Value, out int originId) || !TryGetCartesianPoint(originId, out origin))
+            origin = [0, 0, 0];
+
+        // axis and refDir may be * (wildcard) — use defaults in that case
+        if (TryResolveRef(m.Groups[2].Value, out int axisId) && TryGetDirection(axisId, out axis))
+        { /* got it */ }
+        else
+            axis = [0, 0, 1];
+
+        if (TryResolveRef(m.Groups[3].Value, out int refDirId) && TryGetDirection(refDirId, out refDir))
+        { /* got it */ }
+        else
+            refDir = [1, 0, 0];
+
+        return true;
+    }
+
+    // ── Surface parameter extraction ───────────────────────────────────────
+
+    /// <summary>CYLINDRICAL_SURFACE → (radius in metres, axis direction).</summary>
+    public bool TryGetCylinderParams(int id, out double radiusM, out double[] axis)
+    {
+        radiusM = 0; axis = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"CYLINDRICAL_SURFACE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        if (!double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out radiusM)) return false;
+        radiusM *= LengthScaleToMetres;
+        TryGetAxisPlacement(placeId, out _, out axis, out _);
+        return true;
+    }
+
+    /// <summary>PLANE → normal direction (the axis of AXIS2_PLACEMENT_3D).</summary>
+    public bool TryGetPlaneNormal(int id, out double[] normal)
+    {
+        normal = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw, @"PLANE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        return TryGetAxisPlacement(placeId, out _, out normal, out _);
+    }
+
+    /// <summary>CONICAL_SURFACE → (half-angle radians, apex-radius in metres, axis direction).</summary>
+    public bool TryGetConeParams(int id, out double halfAngle, out double apexRadiusM, out double[] axis)
+    {
+        halfAngle = apexRadiusM = 0; axis = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"CONICAL_SURFACE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double r);
+        double.TryParse(m.Groups[3].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double ha);
+        apexRadiusM = r * LengthScaleToMetres;
+        halfAngle   = ha; // radians — no scale
+        TryGetAxisPlacement(placeId, out _, out axis, out _);
+        return true;
+    }
+
+    /// <summary>SPHERICAL_SURFACE → radius in metres.</summary>
+    public bool TryGetSphereRadius(int id, out double radiusM)
+    {
+        radiusM = 0;
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"SPHERICAL_SURFACE\s*\(\s*'[^']*'\s*,\s*#\d+\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        if (!double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out radiusM)) return false;
+        radiusM *= LengthScaleToMetres;
+        return true;
+    }
+
+    /// <summary>TOROIDAL_SURFACE → (major radius in metres, minor radius in metres).</summary>
+    public bool TryGetTorusParams(int id, out double majorR, out double minorR)
+    {
+        majorR = minorR = 0;
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"TOROIDAL_SURFACE\s*\(\s*'[^']*'\s*,\s*#\d+\s*,\s*([0-9Ee.+\-]+)\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        double.TryParse(m.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out majorR);
+        double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out minorR);
+        majorR *= LengthScaleToMetres;
+        minorR *= LengthScaleToMetres;
+        return true;
+    }
+
+    // ── Collections ────────────────────────────────────────────────────────
+
+    /// <summary>Returns (surfaceEntityId, orientation) for every ADVANCED_FACE in the file.</summary>
+    public IReadOnlyList<(int SurfaceId, bool Outward)> GetAdvancedFaces()
+    {
+        var faces = new List<(int, bool)>();
+        foreach (var (_, raw) in _raw)
+        {
+            // ADVANCED_FACE ( 'name', ( bounds... ), surface_ref, .T. )
+            var m = Regex.Match(raw,
+                @"ADVANCED_FACE\s*\(\s*'[^']*'\s*,\s*\([^)]*\)\s*,\s*(#\d+)\s*,\s*\.(T|F)\.\s*\)");
+            if (!m.Success) continue;
+            if (!TryResolveRef(m.Groups[1].Value, out int surfId)) continue;
+            faces.Add((surfId, m.Groups[2].Value == "T"));
+        }
+        return faces;
+    }
+
+    /// <summary>Returns all CARTESIAN_POINT coordinates (in metres) in the file.</summary>
+    public IReadOnlyList<double[]> GetAllCartesianPoints()
+    {
+        var pts = new List<double[]>();
+        foreach (var (id, _) in _raw)
+        {
+            if (TryGetCartesianPoint(id, out var xyz))
+                pts.Add(xyz);
+        }
+        return pts;
+    }
+
+    /// <summary>Count of MANIFOLD_SOLID_BREP entities — approximates SolidBodyCount.</summary>
+    public int GetManifoldSolidCount()
+        => _raw.Values.Count(raw => raw.Contains("MANIFOLD_SOLID_BREP"));
+
+    // ── Private implementation ─────────────────────────────────────────────
+
+    private void Parse(string text)
+    {
+        // Collapse multi-line entity continuations into single lines.
+        // P21 entities end with ' ;' — any line not ending with ';' continues.
+        var lines = new List<string>();
+        var buf = new System.Text.StringBuilder();
+        bool inData = false;
+
+        foreach (var rawLine in text.Split('\n'))
+        {
+            var line = rawLine.TrimEnd('\r').Trim();
+            if (line == "DATA;") { inData = true; continue; }
+            if (!inData) continue;
+            if (line == "ENDSEC;") break;
+            if (string.IsNullOrEmpty(line)) continue;
+
+            buf.Append(line);
+            if (line.EndsWith(';'))
+            {
+                lines.Add(buf.ToString());
+                buf.Clear();
+            }
+        }
+
+        // Parse each entity: #NNN = rest ;
+        var entityRx = new Regex(@"^#(\d+)\s*=\s*(.+?)\s*;\s*$", RegexOptions.Singleline);
+        foreach (var line in lines)
+        {
+            var m = entityRx.Match(line);
+            if (!m.Success) continue;
+            int id = int.Parse(m.Groups[1].Value, CultureInfo.InvariantCulture);
+            _raw[id] = m.Groups[2].Value.Trim();
+        }
+
+        DetectLengthUnit();
+    }
+
+    private void DetectLengthUnit()
+    {
+        // Find entities containing both LENGTH_UNIT and SI_UNIT to determine length scale.
+        foreach (var (_, raw) in _raw)
+        {
+            if (!raw.Contains("LENGTH_UNIT")) continue;
+            if (raw.Contains(".MILLI., .METRE."))   { LengthScaleToMetres = 1e-3;   return; }
+            if (raw.Contains(".CENTI., .METRE."))   { LengthScaleToMetres = 1e-2;   return; }
+            if (raw.Contains(".METRE."))             { LengthScaleToMetres = 1.0;    return; }
+            if (raw.Contains(".INCH."))              { LengthScaleToMetres = 0.0254; return; }
+        }
+        // Default: millimetres (most common for SolidWorks exports)
+        LengthScaleToMetres = 1e-3;
+    }
+
+    // Parses "#NNN" → int id
+    private static bool TryResolveRef(string token, out int id)
+    {
+        id = 0;
+        var m = Regex.Match(token.Trim(), @"^#(\d+)$");
+        if (!m.Success) return false;
+        return int.TryParse(m.Groups[1].Value, out id);
+    }
+
+    // Parses comma-separated doubles from a raw token string
+    private static bool TryParseDoubles(string csv, int expectedCount, out double[] values)
+    {
+        values = [];
+        var parts = csv.Split(',');
+        if (parts.Length < expectedCount) return false;
+        var result = new double[expectedCount];
+        for (int i = 0; i < expectedCount; i++)
+        {
+            if (!double.TryParse(parts[i].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out result[i]))
+                return false;
+        }
+        values = result;
+        return true;
+    }
+}

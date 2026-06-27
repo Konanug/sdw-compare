@@ -11,6 +11,7 @@ using SolidWorksPartMatcher.Infrastructure.Hashing;
 using SolidWorksPartMatcher.SolidWorks;
 using SolidWorksPartMatcher.Infrastructure.Orchestration;
 using SolidWorksPartMatcher.Infrastructure.Persistence;
+using SolidWorksPartMatcher.Infrastructure.Step;
 using System.IO;
 using System.Windows;
 
@@ -59,6 +60,7 @@ public partial class App : System.Windows.Application
             services.AddSingleton<ICandidateScorer, WeightedCandidateScorer>();
             services.AddSingleton<IClusterBuilder, UnionFindClusterBuilder>();
             services.AddSingleton<ICanonicalNameService, CanonicalNameService>();
+            services.AddSingleton<StepGeometryExtractor>();
             services.AddSingleton<IBodyEquivalenceChecker, BodyEquivalenceChecker>();
             services.AddSingleton<ITessellationComparator, TessellationToleranceComparator>();
             services.AddSingleton<IDetailedGeometryComparator, VolumetricBodyComparator>();

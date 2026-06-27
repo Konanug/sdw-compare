@@ -84,6 +84,8 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
                 com_offset_in_bb TEXT,
                 sketch_text_cut_count INTEGER NOT NULL DEFAULT 0,
                 suppressed_geometry_json TEXT,
+                source_format TEXT NOT NULL DEFAULT 'SLDPRT',
+                face_geometric_signature TEXT,
                 FOREIGN KEY(scanned_file_id) REFERENCES scanned_files(id)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS ix_fingerprints_per_file
@@ -157,6 +159,13 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         // Migration v6: suppressed_geometry_json stores body geometry after temporarily
         // suppressing text-engraving features, for engraving-aware comparison.
         MigrateIfNeeded(6, "ALTER TABLE fingerprints ADD COLUMN suppressed_geometry_json TEXT;");
+
+        // Migration v7: STEP fingerprinting — source format tag and P21-derived face signature.
+        // Uses a safe variant that ignores "duplicate column" errors on fresh databases whose
+        // CREATE TABLE already includes these columns (no pre-mark in INSERT OR IGNORE above).
+        MigrateIfNeededSafe(7,
+            "ALTER TABLE fingerprints ADD COLUMN source_format TEXT NOT NULL DEFAULT 'SLDPRT';",
+            "ALTER TABLE fingerprints ADD COLUMN face_geometric_signature TEXT;");
     }
 
     private void MigrateIfNeeded(int version, string sql)
@@ -169,6 +178,30 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         using var apply = _conn.CreateCommand();
         apply.CommandText = sql;
         apply.ExecuteNonQuery();
+
+        using var record = _conn.CreateCommand();
+        record.CommandText = "INSERT INTO schema_migrations(version, applied_utc) VALUES(@v, @t)";
+        record.Parameters.AddWithValue("@v", version);
+        record.Parameters.AddWithValue("@t", DateTime.UtcNow.ToString("O"));
+        record.ExecuteNonQuery();
+    }
+
+    // Variant that silently ignores "duplicate column name" errors so the same SQL can run
+    // on both fresh databases (CREATE TABLE already has the column) and existing ones (need ALTER).
+    private void MigrateIfNeededSafe(int version, params string[] statements)
+    {
+        using var check = _conn.CreateCommand();
+        check.CommandText = "SELECT COUNT(*) FROM schema_migrations WHERE version=@v";
+        check.Parameters.AddWithValue("@v", version);
+        if ((long)(check.ExecuteScalar() ?? 0L) > 0) return;
+
+        foreach (var sql in statements)
+        {
+            using var apply = _conn.CreateCommand();
+            apply.CommandText = sql;
+            try { apply.ExecuteNonQuery(); }
+            catch (Microsoft.Data.Sqlite.SqliteException) { /* column already exists — ok */ }
+        }
 
         using var record = _conn.CreateCommand();
         record.CommandText = "INSERT INTO schema_migrations(version, applied_utc) VALUES(@v, @t)";
@@ -268,10 +301,10 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
                 mass_kg, center_of_mass_m, face_count, edge_count, vertex_count, feature_count,
                 feature_type_histogram, material, custom_properties, solidworks_version,
                 extractor_version_label, extracted_utc, chirality_sign, com_offset_in_bb,
-                sketch_text_cut_count, suppressed_geometry_json)
+                sketch_text_cut_count, suppressed_geometry_json, source_format, face_geometric_signature)
             VALUES (@id,@fileId,@sha,@cfg,@extVer,@solid,@surface,@bb,@vol,@sa,@mass,@com,
                     @face,@edge,@vertex,@feat,@featHist,@mat,@props,@swVer,@extLabel,@extracted,@chirality,@comOff,
-                    @sketchTextCuts,@suppGeom)
+                    @sketchTextCuts,@suppGeom,@srcFmt,@faceSig)
             ON CONFLICT(scanned_file_id, config_name, extractor_version) DO NOTHING
             """;
         cmd.Parameters.AddWithValue("@id", fp.Id.ToString());
@@ -312,6 +345,11 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
                 fp.SuppressedVertexCount ?? 0));
         }
         cmd.Parameters.AddWithValue("@suppGeom", suppGeomJson ?? (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("@srcFmt", fp.SourceFormat);
+        cmd.Parameters.AddWithValue("@faceSig",
+            fp.FaceGeometricSignature != null
+                ? JsonSerializer.Serialize(fp.FaceGeometricSignature)
+                : (object)DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -339,6 +377,11 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         SuppressedGeometryData? suppGeom = null;
         if (r.FieldCount > 25 && !r.IsDBNull(25))
             suppGeom = JsonSerializer.Deserialize<SuppressedGeometryData>(r.GetString(25));
+
+        string sourceFormat = r.FieldCount > 26 && !r.IsDBNull(26) ? r.GetString(26) : "SLDPRT";
+        IReadOnlyList<string>? faceSig = null;
+        if (r.FieldCount > 27 && !r.IsDBNull(27))
+            faceSig = JsonSerializer.Deserialize<List<string>>(r.GetString(27));
 
         return new PartFingerprint(
             Id: Guid.Parse(r.GetString(0)),
@@ -373,7 +416,9 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
             SuppressedSurfaceAreaM2: suppGeom?.SurfaceAreaM2,
             SuppressedFaceCount: suppGeom?.FaceCount,
             SuppressedEdgeCount: suppGeom?.EdgeCount,
-            SuppressedVertexCount: suppGeom?.VertexCount);
+            SuppressedVertexCount: suppGeom?.VertexCount,
+            SourceFormat: sourceFormat,
+            FaceGeometricSignature: faceSig);
     }
 
     // ── Candidate pairs ────────────────────────────────────────────────────

@@ -44,4 +44,10 @@ public sealed record PartFingerprint(
     double? SuppressedSurfaceAreaM2,
     int? SuppressedFaceCount,
     int? SuppressedEdgeCount,
-    int? SuppressedVertexCount);
+    int? SuppressedVertexCount,
+    // "SLDPRT" | "STEP" — determines comparison routing and feature availability.
+    string SourceFormat = "SLDPRT",
+    // Sorted list of canonical face descriptors extracted directly from P21 geometry.
+    // Populated for STEP files by StepGeometryExtractor; null for SLDPRT files.
+    // Two fingerprints with identical sorted signatures have provably the same B-Rep surfaces.
+    IReadOnlyList<string>? FaceGeometricSignature = null);
