@@ -1,0 +1,145 @@
+<Window x:Class="SolidWorksPartMatcher.App.Views.StepDiffWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="3D Diff" Height="700" Width="1100"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="Segoe UI" FontSize="13">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>   <!-- title bar -->
+            <RowDefinition Height="*"/>      <!-- 3D viewports -->
+            <RowDefinition Height="Auto"/>   <!-- legend + summary -->
+            <RowDefinition Height="Auto"/>   <!-- buttons -->
+        </Grid.RowDefinitions>
+
+        <!-- ── Title bar ──────────────────────────────────────────────────── -->
+        <Border Grid.Row="0" Background="#263238" Padding="12,8">
+            <TextBlock x:Name="TitleLabel"
+                       Foreground="White" FontSize="15" FontWeight="SemiBold"
+                       TextTrimming="CharacterEllipsis"/>
+        </Border>
+
+        <!-- ── 3D Viewports ───────────────────────────────────────────────── -->
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="4"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Part A panel -->
+            <Grid Grid.Column="0">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="#ECEFF1" Padding="8,4">
+                    <TextBlock x:Name="LabelA"
+                               FontWeight="SemiBold" Foreground="#37474F"
+                               TextTrimming="CharacterEllipsis"/>
+                </Border>
+                <Viewport3D x:Name="ViewportA" Grid.Row="1"
+                            ClipToBounds="True"
+                            MouseLeftButtonDown="Viewport_MouseLeftButtonDown"
+                            MouseMove="Viewport_MouseMove"
+                            MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
+                            MouseWheel="Viewport_MouseWheel">
+                    <Viewport3D.Camera>
+                        <PerspectiveCamera x:Name="CameraA"
+                                           Position="0,0,1"
+                                           LookDirection="0,0,-1"
+                                           UpDirection="0,1,0"
+                                           FieldOfView="45"/>
+                    </Viewport3D.Camera>
+                    <ModelVisual3D>
+                        <ModelVisual3D.Content>
+                            <Model3DGroup>
+                                <DirectionalLight Color="#DDDDDD" Direction="-1,-2,-1"/>
+                                <AmbientLight Color="#444444"/>
+                            </Model3DGroup>
+                        </ModelVisual3D.Content>
+                    </ModelVisual3D>
+                    <ModelVisual3D x:Name="ModelA"/>
+                </Viewport3D>
+            </Grid>
+
+            <!-- Splitter -->
+            <GridSplitter Grid.Column="1" Width="4"
+                          HorizontalAlignment="Stretch"
+                          Background="#CFD8DC" Cursor="SizeWE"/>
+
+            <!-- Part B panel -->
+            <Grid Grid.Column="2">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border Grid.Row="0" Background="#ECEFF1" Padding="8,4">
+                    <TextBlock x:Name="LabelB"
+                               FontWeight="SemiBold" Foreground="#37474F"
+                               TextTrimming="CharacterEllipsis"/>
+                </Border>
+                <Viewport3D x:Name="ViewportB" Grid.Row="1"
+                            ClipToBounds="True"
+                            MouseLeftButtonDown="Viewport_MouseLeftButtonDown"
+                            MouseMove="Viewport_MouseMove"
+                            MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
+                            MouseWheel="Viewport_MouseWheel">
+                    <Viewport3D.Camera>
+                        <PerspectiveCamera x:Name="CameraB"
+                                           Position="0,0,1"
+                                           LookDirection="0,0,-1"
+                                           UpDirection="0,1,0"
+                                           FieldOfView="45"/>
+                    </Viewport3D.Camera>
+                    <ModelVisual3D>
+                        <ModelVisual3D.Content>
+                            <Model3DGroup>
+                                <DirectionalLight Color="#DDDDDD" Direction="-1,-2,-1"/>
+                                <AmbientLight Color="#444444"/>
+                            </Model3DGroup>
+                        </ModelVisual3D.Content>
+                    </ModelVisual3D>
+                    <ModelVisual3D x:Name="ModelB"/>
+                </Viewport3D>
+            </Grid>
+        </Grid>
+
+        <!-- ── Legend + summary ───────────────────────────────────────────── -->
+        <Border Grid.Row="2" Background="#ECEFF1" Padding="10,6" BorderBrush="#CFD8DC" BorderThickness="0,1,0,1">
+            <WrapPanel Orientation="Horizontal" VerticalAlignment="Center">
+                <!-- Legend items -->
+                <StackPanel Orientation="Horizontal" Margin="0,0,16,0" VerticalAlignment="Center">
+                    <Ellipse Width="12" Height="12" Fill="#4CAF50" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Matching face" VerticalAlignment="Center" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,16,0" VerticalAlignment="Center">
+                    <Ellipse Width="12" Height="12" Fill="#FF6B35" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Different / A-only" VerticalAlignment="Center" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,16,0" VerticalAlignment="Center">
+                    <Ellipse Width="12" Height="12" Fill="#2196F3" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="B-only" VerticalAlignment="Center" FontSize="12"/>
+                </StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,24,0" VerticalAlignment="Center">
+                    <Ellipse Width="12" Height="12" Fill="#9E9E9E" Margin="0,0,4,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Complex surface" VerticalAlignment="Center" FontSize="12"/>
+                </StackPanel>
+                <!-- Summary -->
+                <TextBlock x:Name="SummaryLabel"
+                           VerticalAlignment="Center" FontSize="12"
+                           Foreground="#455A64"/>
+            </WrapPanel>
+        </Border>
+
+        <!-- ── Buttons ────────────────────────────────────────────────────── -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right"
+                    Margin="8,6,8,8">
+            <Button Content="Reset View" Padding="10,4" Margin="0,0,6,0"
+                    Click="ResetView_Click"/>
+            <Button Content="Close" Padding="10,4" IsCancel="True"
+                    Click="Close_Click"/>
+        </StackPanel>
+    </Grid>
+</Window>

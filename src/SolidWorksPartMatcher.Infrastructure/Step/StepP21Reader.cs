@@ -10,7 +10,7 @@ namespace SolidWorksPartMatcher.Infrastructure.Step;
 ///
 /// Supports the AP214 subset produced by SolidWorks 2024 STEP exports.
 /// </summary>
-internal sealed class StepP21Reader
+public sealed class StepP21Reader
 {
     // Raw entity strings: id → text after "#NNN = " and before the terminating ";"
     private readonly Dictionary<int, string> _raw = new();
@@ -118,6 +118,21 @@ internal sealed class StepP21Reader
         return true;
     }
 
+    /// <summary>CYLINDRICAL_SURFACE → (radius in metres, axis origin in metres, axis direction).</summary>
+    public bool TryGetCylinderParamsFull(int id, out double radiusM, out double[] axisOrigin, out double[] axisDir)
+    {
+        radiusM = 0; axisOrigin = []; axisDir = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"CYLINDRICAL_SURFACE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        if (!double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out radiusM)) return false;
+        radiusM *= LengthScaleToMetres;
+        TryGetAxisPlacement(placeId, out axisOrigin, out axisDir, out _);
+        return true;
+    }
+
     /// <summary>PLANE → normal direction (the axis of AXIS2_PLACEMENT_3D).</summary>
     public bool TryGetPlaneNormal(int id, out double[] normal)
     {
@@ -127,6 +142,17 @@ internal sealed class StepP21Reader
         if (!m.Success) return false;
         if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
         return TryGetAxisPlacement(placeId, out _, out normal, out _);
+    }
+
+    /// <summary>PLANE → (origin in metres, normal direction).</summary>
+    public bool TryGetPlaneFull(int id, out double[] origin, out double[] normal)
+    {
+        origin = []; normal = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw, @"PLANE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        return TryGetAxisPlacement(placeId, out origin, out normal, out _);
     }
 
     /// <summary>CONICAL_SURFACE → (half-angle radians, apex-radius in metres, axis direction).</summary>
@@ -207,6 +233,176 @@ internal sealed class StepP21Reader
     /// <summary>Count of MANIFOLD_SOLID_BREP entities — approximates SolidBodyCount.</summary>
     public int GetManifoldSolidCount()
         => _raw.Values.Count(raw => raw.Contains("MANIFOLD_SOLID_BREP"));
+
+    /// <summary>
+    /// Returns a <see cref="StepFaceGeometry"/> for every ADVANCED_FACE in the file.
+    /// Each record carries the surface type, canonical descriptor, boundary vertex positions,
+    /// and surface-specific parameters (axis, radius) ready for 3D rendering or diffing.
+    /// </summary>
+    public IReadOnlyList<StepFaceGeometry> GetFaceGeometries()
+    {
+        var result = new List<StepFaceGeometry>();
+        var afRx = new Regex(
+            @"ADVANCED_FACE\s*\(\s*'[^']*'\s*,\s*\(([^)]*)\)\s*,\s*(#\d+)\s*,\s*\.(T|F)\.\s*\)",
+            RegexOptions.Compiled);
+
+        foreach (var (_, raw) in _raw)
+        {
+            var m = afRx.Match(raw);
+            if (!m.Success) continue;
+
+            var boundRefs = ParseRefList(m.Groups[1].Value);
+            if (!TryResolveRef(m.Groups[2].Value, out int surfId)) continue;
+            string surfType = GetEntityType(surfId) ?? "UNKNOWN";
+
+            var boundaryPoints = CollectBoundaryPoints(boundRefs);
+            BuildSurfaceParams(surfId, surfType,
+                out string descriptor, out double[]? axisOrigin,
+                out double[]? axisDir, out double? radius);
+
+            result.Add(new StepFaceGeometry(
+                SurfaceId:      surfId,
+                SurfaceType:    surfType,
+                Descriptor:     descriptor,
+                BoundaryPoints: boundaryPoints,
+                AxisOrigin:     axisOrigin,
+                AxisDirection:  axisDir,
+                Radius:         radius));
+        }
+
+        return result;
+    }
+
+    // ── GetFaceGeometries helpers ──────────────────────────────────────────
+
+    private List<double[]> CollectBoundaryPoints(IReadOnlyList<int> boundRefs)
+    {
+        var seen        = new HashSet<int>();
+        var pts         = new List<double[]>();
+        var faceBindRx  = new Regex(@"FACE(?:_OUTER)?_BOUND\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        var edgeLoopRx  = new Regex(@"EDGE_LOOP\s*\(\s*'[^']*'\s*,\s*\(\s*((?:#\d+\s*,?\s*)+)\)", RegexOptions.Compiled);
+        var orientRx    = new Regex(@"ORIENTED_EDGE\s*\(\s*'[^']*'\s*,\s*\*\s*,\s*\*\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        var edgeCurveRx = new Regex(@"EDGE_CURVE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        var vertexRx    = new Regex(@"VERTEX_POINT\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*\)", RegexOptions.Compiled);
+
+        foreach (var boundId in boundRefs)
+        {
+            if (!_raw.TryGetValue(boundId, out var boundRaw)) continue;
+            var fbm = faceBindRx.Match(boundRaw);
+            if (!fbm.Success) continue;
+            if (!TryResolveRef(fbm.Groups[1].Value, out int loopId)) continue;
+            if (!_raw.TryGetValue(loopId, out var loopRaw)) continue;
+
+            var elm = edgeLoopRx.Match(loopRaw);
+            if (!elm.Success) continue;
+            var orientedEdgeRefs = ParseRefList(elm.Groups[1].Value);
+
+            foreach (var oeId in orientedEdgeRefs)
+            {
+                if (!_raw.TryGetValue(oeId, out var oeRaw)) continue;
+                var oem = orientRx.Match(oeRaw);
+                if (!oem.Success) continue;
+                if (!TryResolveRef(oem.Groups[1].Value, out int ecId)) continue;
+                if (!_raw.TryGetValue(ecId, out var ecRaw)) continue;
+
+                var ecm = edgeCurveRx.Match(ecRaw);
+                if (!ecm.Success) continue;
+
+                foreach (var vRefStr in new[] { ecm.Groups[1].Value, ecm.Groups[2].Value })
+                {
+                    if (!TryResolveRef(vRefStr, out int vertId)) continue;
+                    if (!seen.Add(vertId)) continue;
+                    if (!_raw.TryGetValue(vertId, out var vertRaw)) continue;
+                    var vm = vertexRx.Match(vertRaw);
+                    if (!vm.Success) continue;
+                    if (!TryResolveRef(vm.Groups[1].Value, out int cpId)) continue;
+                    if (TryGetCartesianPoint(cpId, out var xyz))
+                        pts.Add(xyz);
+                }
+            }
+        }
+
+        return pts;
+    }
+
+    private void BuildSurfaceParams(
+        int surfId, string surfType,
+        out string descriptor, out double[]? axisOrigin,
+        out double[]? axisDir, out double? radius)
+    {
+        axisOrigin = null; axisDir = null; radius = null;
+
+        switch (surfType)
+        {
+            case "CYLINDRICAL_SURFACE":
+                if (TryGetCylinderParamsFull(surfId, out double r, out var orig, out var ax))
+                {
+                    var axCopy = (double[])ax.Clone();
+                    CanonicalizeAxis(axCopy);
+                    descriptor = $"CYLINDER|{r:R}|{axCopy[0]:F4}|{axCopy[1]:F4}|{axCopy[2]:F4}";
+                    axisOrigin = orig; axisDir = ax; radius = r;
+                }
+                else descriptor = "CYLINDER|PARSE_ERROR";
+                break;
+
+            case "PLANE":
+                if (TryGetPlaneFull(surfId, out var planeOrig, out var planeNorm))
+                {
+                    var nCopy = (double[])planeNorm.Clone();
+                    CanonicalizeAxis(nCopy);
+                    descriptor = $"PLANE|{nCopy[0]:F4}|{nCopy[1]:F4}|{nCopy[2]:F4}";
+                    axisOrigin = planeOrig; axisDir = planeNorm;
+                }
+                else descriptor = "PLANE|PARSE_ERROR";
+                break;
+
+            case "CONICAL_SURFACE":
+                if (TryGetConeParams(surfId, out double ha, out double ra, out var coneAx))
+                {
+                    var axCopy = (double[])coneAx.Clone();
+                    CanonicalizeAxis(axCopy);
+                    descriptor = $"CONE|{ha:F6}|{ra:R}|{axCopy[0]:F4}|{axCopy[1]:F4}|{axCopy[2]:F4}";
+                    axisDir = coneAx; radius = ra;
+                }
+                else descriptor = "CONE|PARSE_ERROR";
+                break;
+
+            case "SPHERICAL_SURFACE":
+                descriptor = TryGetSphereRadius(surfId, out double rs) ? $"SPHERE|{rs:R}" : "SPHERE|PARSE_ERROR";
+                if (TryGetSphereRadius(surfId, out double rs2)) radius = rs2;
+                break;
+
+            case "TOROIDAL_SURFACE":
+                descriptor = TryGetTorusParams(surfId, out double majorR, out double minorR)
+                    ? $"TORUS|{majorR:R}|{minorR:R}" : "TORUS|PARSE_ERROR";
+                break;
+
+            default:
+                descriptor = $"OTHER|{surfType}";
+                break;
+        }
+    }
+
+    private static IReadOnlyList<int> ParseRefList(string csv)
+    {
+        var result = new List<int>();
+        foreach (Match m in Regex.Matches(csv, @"#(\d+)"))
+            if (int.TryParse(m.Groups[1].Value, out int id))
+                result.Add(id);
+        return result;
+    }
+
+    private static void CanonicalizeAxis(double[] axis)
+    {
+        if (axis.Length < 3) return;
+        int dom = 0;
+        for (int i = 1; i < 3; i++)
+            if (Math.Abs(axis[i]) > Math.Abs(axis[dom])) dom = i;
+        if (axis[dom] < 0)
+            for (int i = 0; i < axis.Length; i++) axis[i] = -axis[i];
+        for (int i = 0; i < axis.Length; i++)
+            if (Math.Abs(axis[i]) < 1e-9) axis[i] = 0.0;
+    }
 
     // ── Private implementation ─────────────────────────────────────────────
 
