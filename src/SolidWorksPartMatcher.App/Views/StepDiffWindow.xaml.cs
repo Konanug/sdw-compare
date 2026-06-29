@@ -137,19 +137,12 @@ public partial class StepDiffWindow : Window
             .Select(p => new HashSet<string>(p.Faces.Select(f => f.Descriptor), StringComparer.Ordinal))
             .Aggregate((a, b) => { a.IntersectWith(b); return a; });
 
-        // Build a brand-new Model3DGroup each render (no reuse of frozen objects)
+        // Build a brand-new Model3DGroup each render (no reuse of frozen objects).
+        // Opaque unique faces are added FIRST so depth-testing is correct before
+        // the semi-transparent shared faces are composited on top.
         var group = new Model3DGroup();
 
-        // Pass 1: shared faces (from first file only — geometry is identical across files)
-        foreach (var face in parsedFiles[0].Faces)
-        {
-            if (!sharedDescs.Contains(face.Descriptor)) continue;
-            var mesh = BuildFaceMesh(face);
-            if (mesh != null && mesh.Positions.Count > 0)
-                group.Children.Add(MakeFaceModel(mesh, SharedColor));
-        }
-
-        // Pass 2: per-file unique faces (bright per-file colour)
+        // Pass 1: per-file unique faces (opaque) — must be in depth buffer before transparents
         foreach (var (faces, color, _) in parsedFiles)
         {
             foreach (var face in faces)
@@ -159,6 +152,15 @@ public partial class StepDiffWindow : Window
                 if (mesh != null && mesh.Positions.Count > 0)
                     group.Children.Add(MakeFaceModel(mesh, color));
             }
+        }
+
+        // Pass 2: shared faces (semi-transparent grey, from first file — geometry identical)
+        foreach (var face in parsedFiles[0].Faces)
+        {
+            if (!sharedDescs.Contains(face.Descriptor)) continue;
+            var mesh = BuildFaceMesh(face);
+            if (mesh != null && mesh.Positions.Count > 0)
+                group.Children.Add(MakeFaceModel(mesh, SharedColor));
         }
 
         // Clear then assign — prevents WPF from reusing stale frozen content
@@ -232,7 +234,7 @@ public partial class StepDiffWindow : Window
             && face.AxisDirection != null
             && face.Radius        != null
             ? BuildCylinderMesh(face.AxisOrigin, face.AxisDirection, face.Radius.Value, face.BoundaryPoints)
-            : BuildPolygonMesh(face.BoundaryPoints);
+            : BuildPolygonMesh(face.BoundaryPoints, face.AxisDirection);
 
     private static MeshGeometry3D BuildCylinderMesh(
         double[] axisOrigin, double[] axisDir, double radius,
@@ -286,20 +288,52 @@ public partial class StepDiffWindow : Window
         return mesh;
     }
 
-    private static MeshGeometry3D BuildPolygonMesh(IReadOnlyList<double[]> vertices)
+    private static MeshGeometry3D BuildPolygonMesh(IReadOnlyList<double[]> vertices, double[]? normal = null)
     {
         var mesh = new MeshGeometry3D();
         if (vertices.Count < 3) return mesh;
 
+        // Sort vertices by polar angle in the face plane to avoid crossing triangles.
+        // Unordered vertices (common when edge vertices are deduplicated from an EDGE_LOOP)
+        // cause fan-triangulation to produce diagonals that cut through the face.
+        IReadOnlyList<double[]> ordered;
+        if (normal is { Length: >= 3 })
+        {
+            double nlen = Math.Sqrt(normal[0]*normal[0] + normal[1]*normal[1] + normal[2]*normal[2]);
+            if (nlen > 1e-10)
+            {
+                double nx = normal[0]/nlen, ny = normal[1]/nlen, nz = normal[2]/nlen;
+                double cx0 = 0, cy0 = 0, cz0 = 0;
+                foreach (var v in vertices) { cx0 += v[0]; cy0 += v[1]; cz0 += v[2]; }
+                cx0 /= vertices.Count; cy0 /= vertices.Count; cz0 /= vertices.Count;
+
+                // Build orthonormal 2D basis perpendicular to the face normal
+                double ux, uy, uz;
+                if (Math.Abs(nx) < 0.9) { ux = 0; uy = nz; uz = -ny; }
+                else                     { ux = -nz; uy = 0; uz = nx; }
+                double ul = Math.Sqrt(ux*ux + uy*uy + uz*uz);
+                if (ul < 1e-10) ul = 1;
+                ux /= ul; uy /= ul; uz /= ul;
+                double vvx = ny*uz - nz*uy, vvy = nz*ux - nx*uz, vvz = nx*uy - ny*ux;
+
+                ordered = [.. vertices.OrderBy(p =>
+                    Math.Atan2(
+                        (p[0]-cx0)*vvx + (p[1]-cy0)*vvy + (p[2]-cz0)*vvz,
+                        (p[0]-cx0)*ux  + (p[1]-cy0)*uy  + (p[2]-cz0)*uz))];
+            }
+            else ordered = vertices;
+        }
+        else ordered = vertices;
+
         double cx = 0, cy = 0, cz = 0;
-        foreach (var v in vertices) { cx += v[0]; cy += v[1]; cz += v[2]; }
-        cx /= vertices.Count; cy /= vertices.Count; cz /= vertices.Count;
+        foreach (var v in ordered) { cx += v[0]; cy += v[1]; cz += v[2]; }
+        cx /= ordered.Count; cy /= ordered.Count; cz /= ordered.Count;
 
         mesh.Positions.Add(new Point3D(cx, cy, cz));
-        foreach (var v in vertices)
+        foreach (var v in ordered)
             mesh.Positions.Add(new Point3D(v[0], v[1], v[2]));
 
-        int n = vertices.Count;
+        int n = ordered.Count;
         for (int i = 0; i < n; i++)
         {
             mesh.TriangleIndices.Add(0);

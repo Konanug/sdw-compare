@@ -279,7 +279,8 @@ public sealed class StepP21Reader
     {
         var seen        = new HashSet<int>();
         var pts         = new List<double[]>();
-        var faceBindRx  = new Regex(@"FACE(?:_OUTER)?_BOUND\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        // Only outer bounds — inner bounds (holes) cause fan-triangulation artifacts
+        var faceBindRx  = new Regex(@"FACE_OUTER_BOUND\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
         var edgeLoopRx  = new Regex(@"EDGE_LOOP\s*\(\s*'[^']*'\s*,\s*\(\s*((?:#\d+\s*,?\s*)+)\)", RegexOptions.Compiled);
         var orientRx    = new Regex(@"ORIENTED_EDGE\s*\(\s*'[^']*'\s*,\s*\*\s*,\s*\*\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
         var edgeCurveRx = new Regex(@"EDGE_CURVE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
