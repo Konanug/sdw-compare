@@ -204,6 +204,7 @@
                         <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                             <Setter Property="IsExpanded"
                                     Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="AutomationProperties.Name"
                                     Value="{Binding AutomationName}"/>
                         </Style>
@@ -304,7 +305,7 @@
 
                                     <!-- 3D diff button (STEP groups only, far right) -->
                                     <Button Grid.Column="4"
-                                            Content="⊞ Diff"
+                                            Content="Open 3D View"
                                             FontSize="11"
                                             Padding="6,2"
                                             Margin="4,0,0,0"
@@ -312,8 +313,8 @@
                                             Command="{Binding ViewStepDiffCommand}"
                                             Visibility="{Binding IsStepGroup,
                                                          Converter={StaticResource BoolVis}}"
-                                            ToolTip="Open 3D comparison view"
-                                            AutomationProperties.Name="View 3D diff"/>
+                                            ToolTip="Open 3D comparison view for STEP files in this group"
+                                            AutomationProperties.Name="Open 3D comparison view"/>
                                 </Grid>
                             </Border>
 

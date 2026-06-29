@@ -47,11 +47,7 @@
             <!-- Single 3D viewport — all selected parts overlapping -->
             <Border Grid.Column="1" Background="#F0F4F8">
             <Viewport3D x:Name="MainViewport"
-                        ClipToBounds="True"
-                        MouseLeftButtonDown="Viewport_MouseLeftButtonDown"
-                        MouseMove="Viewport_MouseMove"
-                        MouseLeftButtonUp="Viewport_MouseLeftButtonUp"
-                        MouseWheel="Viewport_MouseWheel">
+                        ClipToBounds="True">
                 <Viewport3D.Camera>
                     <PerspectiveCamera x:Name="MainCamera"
                                        Position="0,0,1"

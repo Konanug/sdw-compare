@@ -12,6 +12,7 @@ using WMouseEventArgs = System.Windows.Input.MouseEventArgs;
 using WMouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
 using WMouseWheelEventArgs  = System.Windows.Input.MouseWheelEventArgs;
 using WMouseButtonState     = System.Windows.Input.MouseButtonState;
+using WMouseButton          = System.Windows.Input.MouseButton;
 using WColor          = System.Windows.Media.Color;
 using WPoint          = System.Windows.Point;
 
@@ -42,12 +43,12 @@ public partial class StepDiffWindow : Window
     private readonly List<(WCheckBox Cb, string Path, WColor Color)> _fileItems = [];
 
     // ── Camera orbit state ─────────────────────────────────────────────────
-    private double _azimuth   = 30.0;
-    private double _elevation = 25.0;
-    private double _distance  = 1.0;
-    private Point3D _center   = new(0, 0, 0);
-    private WPoint  _dragStart;
-    private bool    _isDragging;
+    private double  _azimuth      = 30.0;
+    private double  _elevation    = 25.0;
+    private double  _distance     = 1.0;
+    private Point3D _center       = new(0, 0, 0);
+    private WPoint  _lastMousePos;
+    private bool    _isOrbitDragging;
 
     public StepDiffWindow(string displayName, IReadOnlyList<string> allPaths)
     {
@@ -56,6 +57,13 @@ public partial class StepDiffWindow : Window
         TitleLabel.Text = $"3D Part Comparison — {displayName}";
 
         BuildFileSelector();
+
+        // Window-level mouse: orbit works from anywhere in the window, not just
+        // when hovering the Viewport3D.  Also handles middle-button drag (SolidWorks style).
+        PreviewMouseDown  += OnPreviewMouseDown;
+        PreviewMouseMove  += OnPreviewMouseMove;
+        PreviewMouseUp    += OnPreviewMouseUp;
+        PreviewMouseWheel += OnPreviewMouseWheel;
 
         // Defer first render until after WPF has fully initialised the Viewport3D
         Loaded += (_, _) => Dispatcher.BeginInvoke(
@@ -228,62 +236,159 @@ public partial class StepDiffWindow : Window
         return new GeometryModel3D(mesh, mat) { BackMaterial = mat };
     }
 
-    private static MeshGeometry3D? BuildFaceMesh(StepFaceGeometry face) =>
-        face.SurfaceType == "CYLINDRICAL_SURFACE"
-            && face.AxisOrigin    != null
-            && face.AxisDirection != null
-            && face.Radius        != null
-            ? BuildCylinderMesh(face.AxisOrigin, face.AxisDirection, face.Radius.Value, face.BoundaryPoints)
-            : BuildPolygonMesh(face.BoundaryPoints, face.AxisDirection);
+    private static MeshGeometry3D? BuildFaceMesh(StepFaceGeometry face) => face.SurfaceType switch
+    {
+        "CYLINDRICAL_SURFACE" when face.AxisOrigin != null && face.AxisDirection != null && face.Radius != null
+            => BuildCylinderMesh(face.AxisOrigin, face.AxisDirection, face.Radius.Value, face.BoundaryPoints),
+        "CONICAL_SURFACE" when face.AxisOrigin != null && face.AxisDirection != null
+            => BuildFrustumMesh(face.AxisOrigin, face.AxisDirection, face.BoundaryPoints),
+        _   => BuildPolygonMesh(face.BoundaryPoints, face.AxisDirection)
+    };
 
     private static MeshGeometry3D BuildCylinderMesh(
         double[] axisOrigin, double[] axisDir, double radius,
-        IReadOnlyList<double[]> boundaryPoints, int segments = 32)
+        IReadOnlyList<double[]> boundaryPoints, int segments = 40)
     {
-        double len = Math.Sqrt(axisDir[0] * axisDir[0] + axisDir[1] * axisDir[1] + axisDir[2] * axisDir[2]);
+        double len = Math.Sqrt(axisDir[0]*axisDir[0] + axisDir[1]*axisDir[1] + axisDir[2]*axisDir[2]);
         if (len < 1e-10) return BuildPolygonMesh(boundaryPoints);
 
-        double ax = axisDir[0] / len, ay = axisDir[1] / len, az = axisDir[2] / len;
+        double ax = axisDir[0]/len, ay = axisDir[1]/len, az = axisDir[2]/len;
         double ox = axisOrigin[0], oy = axisOrigin[1], oz = axisOrigin[2];
 
         double minT = double.MaxValue, maxT = double.MinValue;
         foreach (var p in boundaryPoints)
         {
-            double t = (p[0] - ox) * ax + (p[1] - oy) * ay + (p[2] - oz) * az;
+            double t = (p[0]-ox)*ax + (p[1]-oy)*ay + (p[2]-oz)*az;
             if (t < minT) minT = t;
             if (t > maxT) maxT = t;
         }
         if (maxT - minT < 1e-10) { minT = -radius; maxT = radius; }
 
         double ux, uy, uz;
-        if (Math.Abs(ax) < 0.9) { ux = 0;   uy =  az; uz = -ay; }
-        else                     { ux = -az; uy =  0;  uz =  ax; }
-        double ul = Math.Sqrt(ux * ux + uy * uy + uz * uz);
+        if (Math.Abs(ax) < 0.9) { ux = 0; uy = az; uz = -ay; }
+        else                     { ux = -az; uy = 0; uz = ax; }
+        double ul = Math.Sqrt(ux*ux + uy*uy + uz*uz);
         if (ul < 1e-10) ul = 1;
         ux /= ul; uy /= ul; uz /= ul;
-        double vx = ay * uz - az * uy, vy = az * ux - ax * uz, vz = ax * uy - ay * ux;
+        double vx = ay*uz - az*uy, vy = az*ux - ax*uz, vz = ax*uy - ay*ux;
 
         var mesh = new MeshGeometry3D();
         for (int i = 0; i <= segments; i++)
         {
             double theta = 2 * Math.PI * i / segments;
             double cos = Math.Cos(theta), sin = Math.Sin(theta);
-            double nx = cos * ux + sin * vx, ny = cos * uy + sin * vy, nz = cos * uz + sin * vz;
+            double nx = cos*ux + sin*vx, ny = cos*uy + sin*vy, nz = cos*uz + sin*vz;
 
-            mesh.Positions.Add(new Point3D(
-                ox + nx * radius + ax * minT,
-                oy + ny * radius + ay * minT,
-                oz + nz * radius + az * minT));
-            mesh.Positions.Add(new Point3D(
-                ox + nx * radius + ax * maxT,
-                oy + ny * radius + ay * maxT,
-                oz + nz * radius + az * maxT));
+            mesh.Positions.Add(new Point3D(ox + nx*radius + ax*minT,
+                                           oy + ny*radius + ay*minT,
+                                           oz + nz*radius + az*minT));
+            mesh.Positions.Add(new Point3D(ox + nx*radius + ax*maxT,
+                                           oy + ny*radius + ay*maxT,
+                                           oz + nz*radius + az*maxT));
         }
         for (int i = 0; i < segments; i++)
         {
-            int b0 = i * 2, t0 = b0 + 1, b1 = (i + 1) * 2, t1 = b1 + 1;
+            int b0 = i*2, t0 = b0+1, b1 = (i+1)*2, t1 = b1+1;
             mesh.TriangleIndices.Add(b0); mesh.TriangleIndices.Add(b1); mesh.TriangleIndices.Add(t0);
             mesh.TriangleIndices.Add(t0); mesh.TriangleIndices.Add(b1); mesh.TriangleIndices.Add(t1);
+        }
+
+        // Closed disk caps — the cylinder was previously open at both ends
+        int botIdx = mesh.Positions.Count;
+        mesh.Positions.Add(new Point3D(ox + ax*minT, oy + ay*minT, oz + az*minT));
+        int topIdx = mesh.Positions.Count;
+        mesh.Positions.Add(new Point3D(ox + ax*maxT, oy + ay*maxT, oz + az*maxT));
+        for (int i = 0; i < segments; i++)
+        {
+            int b0 = i*2, b1 = (i+1)*2, t0 = i*2+1, t1 = (i+1)*2+1;
+            mesh.TriangleIndices.Add(botIdx); mesh.TriangleIndices.Add(b0); mesh.TriangleIndices.Add(b1);
+            mesh.TriangleIndices.Add(topIdx); mesh.TriangleIndices.Add(t1); mesh.TriangleIndices.Add(t0);
+        }
+        return mesh;
+    }
+
+    /// <summary>
+    /// Builds a frustum (truncated cone) mesh from the axis and boundary circle samples.
+    /// Separates boundary points into two rings by axis projection, computes each ring's
+    /// radius analytically, then generates quads + disk caps.
+    /// </summary>
+    private static MeshGeometry3D BuildFrustumMesh(
+        double[] axisOrigin, double[] axisDir,
+        IReadOnlyList<double[]> boundaryPoints, int segments = 40)
+    {
+        double len = Math.Sqrt(axisDir[0]*axisDir[0] + axisDir[1]*axisDir[1] + axisDir[2]*axisDir[2]);
+        if (len < 1e-10) return BuildPolygonMesh(boundaryPoints);
+
+        double ax = axisDir[0]/len, ay = axisDir[1]/len, az = axisDir[2]/len;
+        double ox = axisOrigin[0], oy = axisOrigin[1], oz = axisOrigin[2];
+
+        if (boundaryPoints.Count < 4) return BuildPolygonMesh(boundaryPoints);
+
+        double minT = double.MaxValue, maxT = double.MinValue;
+        foreach (var p in boundaryPoints)
+        {
+            double t = (p[0]-ox)*ax + (p[1]-oy)*ay + (p[2]-oz)*az;
+            if (t < minT) minT = t;
+            if (t > maxT) maxT = t;
+        }
+        if (maxT - minT < 1e-10) return BuildPolygonMesh(boundaryPoints);
+
+        double midT = (minT + maxT) / 2.0;
+
+        static double RadDist(double[] p, double ox2, double oy2, double oz2,
+                               double ax2, double ay2, double az2)
+        {
+            double dx = p[0]-ox2, dy = p[1]-oy2, dz = p[2]-oz2;
+            double t  = dx*ax2 + dy*ay2 + dz*az2;
+            double rx = dx - t*ax2, ry = dy - t*ay2, rz = dz - t*az2;
+            return Math.Sqrt(rx*rx + ry*ry + rz*rz);
+        }
+
+        var botPts = boundaryPoints.Where(p => (p[0]-ox)*ax + (p[1]-oy)*ay + (p[2]-oz)*az <= midT).ToList();
+        var topPts = boundaryPoints.Where(p => (p[0]-ox)*ax + (p[1]-oy)*ay + (p[2]-oz)*az >  midT).ToList();
+        if (botPts.Count == 0 || topPts.Count == 0) return BuildPolygonMesh(boundaryPoints);
+
+        double r0 = botPts.Average(p => RadDist(p, ox, oy, oz, ax, ay, az));
+        double r1 = topPts.Average(p => RadDist(p, ox, oy, oz, ax, ay, az));
+
+        double ux, uy, uz;
+        if (Math.Abs(ax) < 0.9) { ux = 0; uy = az; uz = -ay; }
+        else                     { ux = -az; uy = 0; uz = ax; }
+        double ul = Math.Sqrt(ux*ux + uy*uy + uz*uz);
+        if (ul < 1e-10) ul = 1;
+        ux /= ul; uy /= ul; uz /= ul;
+        double vx = ay*uz - az*uy, vy = az*ux - ax*uz, vz = ax*uy - ay*ux;
+
+        var mesh = new MeshGeometry3D();
+        for (int i = 0; i <= segments; i++)
+        {
+            double theta = 2 * Math.PI * i / segments;
+            double cos = Math.Cos(theta), sin = Math.Sin(theta);
+            double nx = cos*ux + sin*vx, ny = cos*uy + sin*vy, nz = cos*uz + sin*vz;
+
+            mesh.Positions.Add(new Point3D(ox + nx*r0 + ax*minT,
+                                           oy + ny*r0 + ay*minT,
+                                           oz + nz*r0 + az*minT));
+            mesh.Positions.Add(new Point3D(ox + nx*r1 + ax*maxT,
+                                           oy + ny*r1 + ay*maxT,
+                                           oz + nz*r1 + az*maxT));
+        }
+        for (int i = 0; i < segments; i++)
+        {
+            int b0 = i*2, t0 = b0+1, b1 = (i+1)*2, t1 = b1+1;
+            mesh.TriangleIndices.Add(b0); mesh.TriangleIndices.Add(b1); mesh.TriangleIndices.Add(t0);
+            mesh.TriangleIndices.Add(t0); mesh.TriangleIndices.Add(b1); mesh.TriangleIndices.Add(t1);
+        }
+
+        int botIdx = mesh.Positions.Count;
+        mesh.Positions.Add(new Point3D(ox + ax*minT, oy + ay*minT, oz + az*minT));
+        int topIdx = mesh.Positions.Count;
+        mesh.Positions.Add(new Point3D(ox + ax*maxT, oy + ay*maxT, oz + az*maxT));
+        for (int i = 0; i < segments; i++)
+        {
+            int b0 = i*2, b1 = (i+1)*2, t0 = i*2+1, t1 = (i+1)*2+1;
+            mesh.TriangleIndices.Add(botIdx); mesh.TriangleIndices.Add(b0); mesh.TriangleIndices.Add(b1);
+            mesh.TriangleIndices.Add(topIdx); mesh.TriangleIndices.Add(t1); mesh.TriangleIndices.Add(t0);
         }
         return mesh;
     }
@@ -425,39 +530,43 @@ public partial class StepDiffWindow : Window
         MainCamera.UpDirection   = new Vector3D(0, 1, 0);
     }
 
-    // ── Mouse orbit ─────────────────────────────────────────────────────────
+    // ── Mouse orbit (window-level — works anywhere in the diff window) ────────
 
-    private void Viewport_MouseLeftButtonDown(object sender, WMouseButtonEventArgs e)
+    private void OnPreviewMouseDown(object sender, WMouseButtonEventArgs e)
     {
-        if (sender is not UIElement el) return;
-        _dragStart  = e.GetPosition(el);
-        _isDragging = true;
-        el.CaptureMouse();
+        if (e.ChangedButton == WMouseButton.Left || e.ChangedButton == WMouseButton.Middle)
+        {
+            _lastMousePos    = e.GetPosition(this);
+            _isOrbitDragging = true;
+        }
     }
 
-    private void Viewport_MouseMove(object sender, WMouseEventArgs e)
+    private void OnPreviewMouseMove(object sender, WMouseEventArgs e)
     {
-        if (!_isDragging || e.LeftButton != WMouseButtonState.Pressed) return;
-        if (sender is not UIElement el) return;
+        if (!_isOrbitDragging) return;
+        bool stillHeld = e.LeftButton   == WMouseButtonState.Pressed
+                      || e.MiddleButton == WMouseButtonState.Pressed;
+        if (!stillHeld) { _isOrbitDragging = false; return; }
 
-        var pos = e.GetPosition(el);
-        _azimuth   -= (pos.X - _dragStart.X) * 0.4;
-        _elevation  = Math.Clamp(_elevation + (pos.Y - _dragStart.Y) * 0.4, -89.0, 89.0);
-        _dragStart  = pos;
+        var pos = e.GetPosition(this);
+        _azimuth   -= (pos.X - _lastMousePos.X) * 0.4;
+        _elevation  = Math.Clamp(_elevation + (pos.Y - _lastMousePos.Y) * 0.4, -89.0, 89.0);
+        _lastMousePos = pos;
         UpdateCamera();
     }
 
-    private void Viewport_MouseLeftButtonUp(object sender, WMouseButtonEventArgs e)
+    private void OnPreviewMouseUp(object sender, WMouseButtonEventArgs e)
     {
-        _isDragging = false;
-        if (sender is UIElement el) el.ReleaseMouseCapture();
+        if (e.ChangedButton == WMouseButton.Left || e.ChangedButton == WMouseButton.Middle)
+            _isOrbitDragging = false;
     }
 
-    private void Viewport_MouseWheel(object sender, WMouseWheelEventArgs e)
+    private void OnPreviewMouseWheel(object sender, WMouseWheelEventArgs e)
     {
         double factor = e.Delta > 0 ? 0.85 : 1.0 / 0.85;
         _distance = Math.Max(_distance * factor, 1e-8);
         UpdateCamera();
+        e.Handled = true; // stop wheel from scrolling panels behind the viewport
     }
 
     // ── Buttons ─────────────────────────────────────────────────────────────

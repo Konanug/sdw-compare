@@ -172,6 +172,24 @@ public sealed class StepP21Reader
         return true;
     }
 
+    /// <summary>CONICAL_SURFACE → (half-angle, apex-radius, axis origin, axis direction).</summary>
+    public bool TryGetConeParamsFull(int id, out double halfAngle, out double apexRadiusM,
+        out double[] axisOrigin, out double[] axisDir)
+    {
+        halfAngle = apexRadiusM = 0; axisOrigin = axisDir = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"CONICAL_SURFACE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double r);
+        double.TryParse(m.Groups[3].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double ha);
+        apexRadiusM = r * LengthScaleToMetres;
+        halfAngle   = ha;
+        TryGetAxisPlacement(placeId, out axisOrigin, out axisDir, out _);
+        return true;
+    }
+
     /// <summary>SPHERICAL_SURFACE → radius in metres.</summary>
     public bool TryGetSphereRadius(int id, out double radiusM)
     {
@@ -278,13 +296,16 @@ public sealed class StepP21Reader
     private List<double[]> CollectBoundaryPoints(IReadOnlyList<int> boundRefs)
     {
         var seen        = new HashSet<int>();
+        var seenCircles = new HashSet<int>();
         var pts         = new List<double[]>();
         // Only outer bounds — inner bounds (holes) cause fan-triangulation artifacts
         var faceBindRx  = new Regex(@"FACE_OUTER_BOUND\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
         var edgeLoopRx  = new Regex(@"EDGE_LOOP\s*\(\s*'[^']*'\s*,\s*\(\s*((?:#\d+\s*,?\s*)+)\)", RegexOptions.Compiled);
         var orientRx    = new Regex(@"ORIENTED_EDGE\s*\(\s*'[^']*'\s*,\s*\*\s*,\s*\*\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
-        var edgeCurveRx = new Regex(@"EDGE_CURVE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        // Capture group 3 = curve geometry ref (LINE, CIRCLE, B_SPLINE…)
+        var edgeCurveRx = new Regex(@"EDGE_CURVE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
         var vertexRx    = new Regex(@"VERTEX_POINT\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*\)", RegexOptions.Compiled);
+        var circleRx    = new Regex(@"CIRCLE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*\)", RegexOptions.Compiled);
 
         foreach (var boundId in boundRefs)
         {
@@ -309,6 +330,7 @@ public sealed class StepP21Reader
                 var ecm = edgeCurveRx.Match(ecRaw);
                 if (!ecm.Success) continue;
 
+                // Corner vertices (edge endpoints)
                 foreach (var vRefStr in new[] { ecm.Groups[1].Value, ecm.Groups[2].Value })
                 {
                     if (!TryResolveRef(vRefStr, out int vertId)) continue;
@@ -319,6 +341,42 @@ public sealed class StepP21Reader
                     if (!TryResolveRef(vm.Groups[1].Value, out int cpId)) continue;
                     if (TryGetCartesianPoint(cpId, out var xyz))
                         pts.Add(xyz);
+                }
+
+                // CIRCLE edges: generate 32 sample points around the circumference.
+                // This gives circular faces (caps, flanges) enough vertices to render
+                // as proper disks rather than degenerate single-point geometry.
+                if (!TryResolveRef(ecm.Groups[3].Value, out int curveId)) continue;
+                if (!_raw.TryGetValue(curveId, out var curveRaw)) continue;
+                if (!seenCircles.Add(curveId)) continue; // one set of samples per unique CIRCLE entity
+
+                var cm = circleRx.Match(curveRaw);
+                if (!cm.Success) continue;
+                if (!TryResolveRef(cm.Groups[1].Value, out int placeId)) continue;
+                if (!double.TryParse(cm.Groups[2].Value, NumberStyles.Float,
+                        CultureInfo.InvariantCulture, out double circR)) continue;
+                circR *= LengthScaleToMetres;
+                if (!TryGetAxisPlacement(placeId, out var cen, out var coneAx, out var refDir)) continue;
+
+                // tangent = axisDir × refDir  (builds 2D basis in the circle plane)
+                double tx = coneAx[1]*refDir[2] - coneAx[2]*refDir[1];
+                double ty = coneAx[2]*refDir[0] - coneAx[0]*refDir[2];
+                double tz = coneAx[0]*refDir[1] - coneAx[1]*refDir[0];
+                double tlen = Math.Sqrt(tx*tx + ty*ty + tz*tz);
+                if (tlen < 1e-10) continue;
+                tx /= tlen; ty /= tlen; tz /= tlen;
+
+                const int CircleSamples = 32;
+                for (int i = 0; i < CircleSamples; i++)
+                {
+                    double theta = 2 * Math.PI * i / CircleSamples;
+                    double c = Math.Cos(theta), s = Math.Sin(theta);
+                    pts.Add(new[]
+                    {
+                        cen[0] + (refDir[0]*c + tx*s) * circR,
+                        cen[1] + (refDir[1]*c + ty*s) * circR,
+                        cen[2] + (refDir[2]*c + tz*s) * circR
+                    });
                 }
             }
         }
@@ -358,12 +416,12 @@ public sealed class StepP21Reader
                 break;
 
             case "CONICAL_SURFACE":
-                if (TryGetConeParams(surfId, out double ha, out double ra, out var coneAx))
+                if (TryGetConeParamsFull(surfId, out double ha, out double ra, out var coneOrig, out var coneAx))
                 {
                     var axCopy = (double[])coneAx.Clone();
                     CanonicalizeAxis(axCopy);
                     descriptor = $"CONE|{ha:F6}|{ra:R}|{axCopy[0]:F4}|{axCopy[1]:F4}|{axCopy[2]:F4}";
-                    axisDir = coneAx; radius = ra;
+                    axisOrigin = coneOrig; axisDir = coneAx; radius = ra;
                 }
                 else descriptor = "CONE|PARSE_ERROR";
                 break;
