@@ -22,8 +22,8 @@ public sealed partial class MatchFileViewModel : ObservableObject
         !string.IsNullOrEmpty(ConfigurationName) &&
         !string.Equals(ConfigurationName, "Default", StringComparison.OrdinalIgnoreCase);
 
-    // Accessible names for screen readers.
-    public string OpenSwAutomationName    => $"Open {FileName} in SOLIDWORKS";
+    public string OpenButtonLabel         => IsStepFile ? "Open File" : "Open in SOLIDWORKS";
+    public string OpenSwAutomationName    => IsStepFile ? $"Open {FileName}" : $"Open {FileName} in SOLIDWORKS";
     public string OpenFolderAutomationName => $"Open folder containing {FileName}";
 
     [ObservableProperty] private string? _openError;
@@ -66,6 +66,23 @@ public sealed partial class MatchFileViewModel : ObservableObject
         {
             OpenError = $"File no longer exists: {FileName}";
             _logger.LogWarning("File not found: {Path}", FullPath);
+            return;
+        }
+
+        // STEP files: open with OS default handler (avoids SW silent-open failure).
+        if (IsStepFile)
+        {
+            try
+            {
+                System.Diagnostics.Process.Start(
+                    new System.Diagnostics.ProcessStartInfo(FullPath) { UseShellExecute = true });
+                _logger.LogInformation("Opened {Path} via OS default handler", FullPath);
+            }
+            catch (Exception ex)
+            {
+                OpenError = $"Cannot open file: {ex.Message}";
+                _logger.LogError(ex, "Shell-execute failed for {Path}", FullPath);
+            }
             return;
         }
 

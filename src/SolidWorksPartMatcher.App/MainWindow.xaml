@@ -369,7 +369,7 @@
                                                            FontSize="11" Foreground="#555"/>
                                             </Border>
 
-                                            <!-- Open in SOLIDWORKS -->
+                                            <!-- Open in SOLIDWORKS / Open File -->
                                             <Button Grid.Column="2"
                                                     HorizontalAlignment="Left"
                                                     Command="{Binding OpenInSolidWorksCommand}"
@@ -377,7 +377,7 @@
                                                     ToolTip="{Binding FullPath}">
                                                 <Button.Style>
                                                     <Style TargetType="Button" BasedOn="{StaticResource ActionBtn}">
-                                                        <Setter Property="Content" Value="Open in SOLIDWORKS"/>
+                                                        <Setter Property="Content" Value="{Binding OpenButtonLabel}"/>
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding OpenInSolidWorksCommand.IsRunning}" Value="True">
                                                                 <Setter Property="Content"   Value="Opening…"/>

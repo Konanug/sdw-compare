@@ -233,29 +233,32 @@ public sealed class ScanOrchestrationService(
                 fileByScannedId.TryGetValue(fpA.ScannedFileId, out var sfA);
                 fileByScannedId.TryGetValue(fpB.ScannedFileId, out var sfB);
 
-                // Stage 3.5: STEP-STEP face signature comparison (P21-derived, no SW COM needed).
-                // For STEP pairs that pass the coarse score threshold, compare sorted face
-                // descriptors directly. Exact descriptor match → ExactGeometryMatch;
-                // same topology but differing parameters → PossibleMatch.
-                bool isStepPair = fpA.SourceFormat == "STEP" && fpB.SourceFormat == "STEP";
-                if (!isBinaryDup && isStepPair
+                // Whether either file is a STEP — SW COM stages must be skipped for these.
+                bool hasAnyStep = fpA.SourceFormat == "STEP" || fpB.SourceFormat == "STEP";
+
+                // Stage 3.5: face geometric signature comparison.
+                // Runs whenever both fingerprints carry a FaceGeometricSignature (STEP from P21
+                // parser, SLDPRT from SW COM face enumeration).  Exact sorted-descriptor match →
+                // ExactGeometryMatch; same face count but differing parameters → PossibleMatch.
+                // For SLDPRT-SLDPRT pairs Stage 4 may still upgrade/downgrade this result.
+                if (!isBinaryDup
                     && fpA.FaceGeometricSignature != null && fpB.FaceGeometricSignature != null)
                 {
-                    var (stepCls, stepReason) = CompareStepFaceSignatures(fpA, fpB, score);
-                    cls = stepCls;
-                    reason = stepReason;
-                    comparatorVersion = "step-face-sig-1";
+                    var (sigCls, sigReason) = CompareStepFaceSignatures(fpA, fpB, score);
+                    cls = sigCls;
+                    reason = sigReason;
+                    comparatorVersion = "face-sig-1";
                     logger.LogDebug("Stage 3.5 face-sig result for {A}↔{B}: {Cls}",
                         sfA?.FileName, sfB?.FileName, cls);
                 }
 
                 // Stage 4: body coincidence — definitive proper-rotation vs reflection test.
-                // Runs for high-score non-binary pairs to confirm ExactGeometryMatch or
-                // correctly classify mirrors. det(R)≈+1 → exact match; det(R)≈-1 → mirror.
-                // Skipped for STEP pairs — Stage 3.5 already produced a definitive result.
+                // Runs for high-score non-binary SLDPRT-SLDPRT pairs to confirm ExactGeometryMatch
+                // or correctly classify mirrors. det(R)≈+1 → exact; det(R)≈-1 → mirror.
+                // Skipped whenever either file is STEP (SW COM cannot reliably open STEP silently).
                 if (bodyChecker != null && sfA != null && sfB != null && !isBinaryDup && !isMirror
                     && !hasHoleWizardConflict && cls != PartClassification.EngravingVariant
-                    && !isStepPair && score >= 0.85)
+                    && !hasAnyStep && score >= 0.85)
                 {
                     try
                     {
@@ -288,7 +291,7 @@ public sealed class ScanOrchestrationService(
                 if (tessellationComparator != null && sfA != null && sfB != null
                     && !isBinaryDup && !isMirror && !hasHoleWizardConflict
                     && cls != PartClassification.EngravingVariant
-                    && !isStepPair && stage4Inconclusive && score >= 0.75)
+                    && !hasAnyStep && stage4Inconclusive && score >= 0.75)
                 {
                     try
                     {
@@ -327,7 +330,7 @@ public sealed class ScanOrchestrationService(
                 // already produced a definitive result (ExactGeometryMatch, Mirror, Engraving).
                 if (geometryComparator != null && sfA != null && sfB != null
                     && cls == PartClassification.PossibleMatch && !isBinaryDup
-                    && !hasHoleWizardConflict && !isStepPair && score >= 0.70)
+                    && !hasHoleWizardConflict && !hasAnyStep && score >= 0.70)
                 {
                     try
                     {
@@ -516,7 +519,9 @@ public sealed class ScanOrchestrationService(
                                  or PartClassification.ExactGeometryMatch
                                  or PartClassification.GeometryMatchMetadataVariant
                                  or PartClassification.EngravingVariant
-                                 or PartClassification.RevisionFamily)
+                                 or PartClassification.RevisionFamily
+                                 or PartClassification.MirrorOrHandedVariant
+                                 or PartClassification.PossibleMatch)
                 Union(p.FingerprintAId, p.FingerprintBId);
 
         // Cluster IDs are the union-find roots chosen by UnionFindClusterBuilder.
