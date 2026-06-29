@@ -268,19 +268,8 @@
                                         </TextBlock.Style>
                                     </TextBlock>
 
-                                    <!-- View Diff button (STEP groups only) -->
-                                    <Button Grid.Column="3"
-                                            Content="View Diff"
-                                            Style="{StaticResource ActionBtn}"
-                                            Command="{Binding ViewStepDiffCommand}"
-                                            Margin="0,0,4,0"
-                                            Visibility="{Binding IsStepGroup,
-                                                         Converter={StaticResource BoolVis}}"
-                                            ToolTip="Open 3D comparison view"
-                                            AutomationProperties.Name="View 3D diff"/>
-
                                     <!-- ⋮ action menu -->
-                                    <Button Grid.Column="4"
+                                    <Button Grid.Column="3"
                                             Content="⋮"
                                             Style="{StaticResource IconBtn}"
                                             Tag="{Binding}"
@@ -312,6 +301,19 @@
                                             </ContextMenu>
                                         </Button.ContextMenu>
                                     </Button>
+
+                                    <!-- 3D diff button (STEP groups only, far right) -->
+                                    <Button Grid.Column="4"
+                                            Content="⊞ Diff"
+                                            FontSize="11"
+                                            Padding="6,2"
+                                            Margin="4,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding ViewStepDiffCommand}"
+                                            Visibility="{Binding IsStepGroup,
+                                                         Converter={StaticResource BoolVis}}"
+                                            ToolTip="Open 3D comparison view"
+                                            AutomationProperties.Name="View 3D diff"/>
                                 </Grid>
                             </Border>
 

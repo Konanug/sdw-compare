@@ -68,7 +68,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     public string AutomationName =>
         $"{DisplayName}, {ClassificationLabel}, {Files.Count} file{(Files.Count == 1 ? "" : "s")}";
 
-    public bool IsStepGroup => Files.Count >= 2 && Files.All(f => f.IsStepFile);
+    public bool IsStepGroup => Files.Count(f => f.IsStepFile) >= 2;
 
     private readonly IPartRepository _repo;
     private readonly ILogger<MatchGroupViewModel> _logger;
@@ -250,8 +250,9 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     [RelayCommand]
     private void ViewStepDiff()
     {
-        if (!IsStepGroup) return;
-        var win = new Views.StepDiffWindow(DisplayName, Files[0].FullPath, Files[1].FullPath)
+        var stepPaths = Files.Where(f => f.IsStepFile).Select(f => f.FullPath).ToList();
+        if (stepPaths.Count < 2) return;
+        var win = new Views.StepDiffWindow(DisplayName, stepPaths)
         {
             Owner = System.Windows.Application.Current.MainWindow
         };

@@ -1,343 +1,381 @@
 using System.IO;
 using System.Windows;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Media3D;
 using SolidWorksPartMatcher.Infrastructure.Step;
-using WpfColor               = System.Windows.Media.Color;
-using WpfMouseEventArgs      = System.Windows.Input.MouseEventArgs;
-using WpfPoint               = System.Windows.Point;
-using WpfMouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
-using WpfMouseButtonState    = System.Windows.Input.MouseButtonState;
-using WpfMouseWheelEventArgs  = System.Windows.Input.MouseWheelEventArgs;
-using WpfMessageBox          = System.Windows.MessageBox;
-using WpfMessageBoxButton    = System.Windows.MessageBoxButton;
-using WpfMessageBoxImage     = System.Windows.MessageBoxImage;
+
+using WCheckBox       = System.Windows.Controls.CheckBox;
+using WEllipse        = System.Windows.Shapes.Ellipse;
+using WTextBlock      = System.Windows.Controls.TextBlock;
+using WStackPanel     = System.Windows.Controls.StackPanel;
+using WMouseEventArgs = System.Windows.Input.MouseEventArgs;
+using WMouseButtonEventArgs = System.Windows.Input.MouseButtonEventArgs;
+using WMouseWheelEventArgs  = System.Windows.Input.MouseWheelEventArgs;
+using WMouseButtonState     = System.Windows.Input.MouseButtonState;
+using WColor          = System.Windows.Media.Color;
+using WPoint          = System.Windows.Point;
 
 namespace SolidWorksPartMatcher.App.Views;
 
 /// <summary>
-/// Side-by-side 3D diff window for two STEP files.
-/// Faces are colour-coded: green = matching, orange-red = A-only / different,
-/// blue = B-only, grey = complex/unrecognised surface.
-/// Code-behind only — no MVVM.
+/// Single-viewport 3D diff window.  All selected STEP files are overlaid in the
+/// same coordinate space (centroid-aligned).  Shared geometry is rendered as
+/// semi-transparent grey; faces unique to each file appear in that file's colour.
 /// </summary>
 public partial class StepDiffWindow : Window
 {
-    // ── Colour palette ─────────────────────────────────────────────────────
-    private static readonly WpfColor ColourMatch   = WpfColor.FromRgb(0x4C, 0xAF, 0x50); // green
-    private static readonly WpfColor ColourAOnly   = WpfColor.FromRgb(0xFF, 0x6B, 0x35); // orange-red
-    private static readonly WpfColor ColourBOnly   = WpfColor.FromRgb(0x21, 0x96, 0xF3); // blue
-    private static readonly WpfColor ColourComplex = WpfColor.FromRgb(0x9E, 0x9E, 0x9E); // grey
+    // ── Colour palette — matches diff3d's pink/green aesthetic ────────────
+    private static readonly WColor[] Palette =
+    [
+        WColor.FromRgb(0xFF, 0x40, 0x81),   // hot-pink
+        WColor.FromRgb(0x00, 0xE5, 0x76),   // bright-green
+        WColor.FromRgb(0xFF, 0x6D, 0x00),   // deep-orange
+        WColor.FromRgb(0x40, 0xC4, 0xFF),   // light-blue
+        WColor.FromRgb(0x69, 0xF0, 0xAE),   // teal
+        WColor.FromRgb(0xFF, 0xD7, 0x40),   // amber
+    ];
+
+    // Shared geometry: semi-transparent dark-grey (similar to diff3d solid body)
+    private static readonly WColor SharedColor = WColor.FromArgb(0xA8, 0x60, 0x70, 0x78);
+
+    private readonly IReadOnlyList<string> _allPaths;
+    private readonly List<(WCheckBox Cb, string Path, WColor Color)> _fileItems = [];
 
     // ── Camera orbit state ─────────────────────────────────────────────────
-    private double   _azimuth   = 30.0;  // degrees
-    private double   _elevation = 20.0;  // degrees
-    private double   _distance  = 1.0;
-    private Point3D  _center    = new(0, 0, 0);
-    private WpfPoint _dragStart;
-    private bool     _isDragging;
+    private double _azimuth   = 30.0;
+    private double _elevation = 25.0;
+    private double _distance  = 1.0;
+    private Point3D _center   = new(0, 0, 0);
+    private WPoint  _dragStart;
+    private bool    _isDragging;
 
-    public StepDiffWindow(string displayName, string pathA, string pathB)
+    public StepDiffWindow(string displayName, IReadOnlyList<string> allPaths)
     {
         InitializeComponent();
+        _allPaths = allPaths;
+        TitleLabel.Text = $"3D Part Comparison — {displayName}";
 
-        TitleLabel.Text = $"{Path.GetFileName(pathA)}  vs  {Path.GetFileName(pathB)}  — {displayName}";
-        LabelA.Text = $"Part A: {Path.GetFileName(pathA)}";
-        LabelB.Text = $"Part B: {Path.GetFileName(pathB)}";
+        BuildFileSelector();
 
-        Loaded += (_, _) => LoadAndDiff(pathA, pathB);
+        // Defer first render until after WPF has fully initialised the Viewport3D
+        Loaded += (_, _) => Dispatcher.BeginInvoke(
+            System.Windows.Threading.DispatcherPriority.Background,
+            new Action(RenderSelected));
     }
 
-    // ── Load, diff and render ──────────────────────────────────────────────
+    // ── File selector ──────────────────────────────────────────────────────
 
-    private void LoadAndDiff(string pathA, string pathB)
+    private void BuildFileSelector()
     {
-        IReadOnlyList<StepFaceGeometry> facesA;
-        IReadOnlyList<StepFaceGeometry> facesB;
+        for (int i = 0; i < _allPaths.Count; i++)
+        {
+            var color = Palette[i % Palette.Length];
 
-        try
-        {
-            var readerA = StepP21Reader.ParseFile(pathA);
-            var readerB = StepP21Reader.ParseFile(pathB);
-            facesA = readerA.GetFaceGeometries();
-            facesB = readerB.GetFaceGeometries();
+            var dot = new WEllipse
+            {
+                Width = 10, Height = 10,
+                Fill  = new SolidColorBrush(color),
+                Margin = new Thickness(0, 0, 5, 0),
+                VerticalAlignment = VerticalAlignment.Center
+            };
+            var lbl = new WTextBlock
+            {
+                Text = Path.GetFileName(_allPaths[i]),
+                VerticalAlignment = VerticalAlignment.Center,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                MaxWidth = 130
+            };
+            var row = new WStackPanel { Orientation = System.Windows.Controls.Orientation.Horizontal };
+            row.Children.Add(dot);
+            row.Children.Add(lbl);
+
+            var cb = new WCheckBox
+            {
+                Content   = row,
+                IsChecked = true,
+                Margin    = new Thickness(0, 3, 0, 3)
+            };
+
+            _fileItems.Add((cb, _allPaths[i], color));
+            FileSelectionPanel.Children.Add(cb);
         }
-        catch (Exception ex)
+    }
+
+    private void Compare_Click(object sender, RoutedEventArgs e) => RenderSelected();
+
+    // ── Rendering ──────────────────────────────────────────────────────────
+
+    private void RenderSelected()
+    {
+        var selected = _fileItems.Where(x => x.Cb.IsChecked == true).ToList();
+        if (selected.Count < 2)
         {
-            WpfMessageBox.Show(
-                $"Failed to parse STEP files:\n{ex.Message}",
-                "Parse Error", WpfMessageBoxButton.OK, WpfMessageBoxImage.Error);
+            SummaryLabel.Text = "Select at least 2 files to compare.";
             return;
         }
 
-        // Build descriptor sets for match classification
-        var descB = new HashSet<string>(facesB.Select(f => f.Descriptor), StringComparer.Ordinal);
-        var descA = new HashSet<string>(facesA.Select(f => f.Descriptor), StringComparer.Ordinal);
-
-        // Build 3D models
-        var groupA = new Model3DGroup();
-        var groupB = new Model3DGroup();
-
-        int matchCount = 0, aOnlyCount = 0, bOnlyCount = 0;
-
-        // Add lights
-        groupA.Children.Add(new DirectionalLight(WpfColor.FromRgb(0xCC, 0xCC, 0xCC), new Vector3D(-1, -2, -1)));
-        groupA.Children.Add(new AmbientLight(WpfColor.FromRgb(0x55, 0x55, 0x55)));
-        groupB.Children.Add(new DirectionalLight(WpfColor.FromRgb(0xCC, 0xCC, 0xCC), new Vector3D(-1, -2, -1)));
-        groupB.Children.Add(new AmbientLight(WpfColor.FromRgb(0x55, 0x55, 0x55)));
-
-        foreach (var face in facesA)
+        var parsedFiles = new List<(IReadOnlyList<StepFaceGeometry> Faces, WColor Color, string Name)>();
+        try
         {
-            WpfColor colour;
-            if (face.Descriptor.StartsWith("OTHER|", StringComparison.Ordinal))
+            foreach (var (_, path, color) in selected)
             {
-                colour = ColourComplex;
+                var reader  = StepP21Reader.ParseFile(path);
+                var faces   = reader.GetFaceGeometries();
+                var aligned = CentroidAlign(faces);
+                parsedFiles.Add((aligned, color, Path.GetFileName(path)));
             }
-            else if (descB.Contains(face.Descriptor))
-            {
-                colour = ColourMatch;
-                matchCount++;
-            }
-            else
-            {
-                colour = ColourAOnly;
-                aOnlyCount++;
-            }
+        }
+        catch (Exception ex)
+        {
+            System.Windows.MessageBox.Show($"Failed to parse STEP file:\n{ex.Message}",
+                "Parse Error", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
+            return;
+        }
 
+        // Shared descriptors = appear in every selected file
+        var sharedDescs = parsedFiles
+            .Select(p => new HashSet<string>(p.Faces.Select(f => f.Descriptor), StringComparer.Ordinal))
+            .Aggregate((a, b) => { a.IntersectWith(b); return a; });
+
+        // Build a brand-new Model3DGroup each render (no reuse of frozen objects)
+        var group = new Model3DGroup();
+
+        // Pass 1: shared faces (from first file only — geometry is identical across files)
+        foreach (var face in parsedFiles[0].Faces)
+        {
+            if (!sharedDescs.Contains(face.Descriptor)) continue;
             var mesh = BuildFaceMesh(face);
-            if (mesh != null)
+            if (mesh != null && mesh.Positions.Count > 0)
+                group.Children.Add(MakeFaceModel(mesh, SharedColor));
+        }
+
+        // Pass 2: per-file unique faces (bright per-file colour)
+        foreach (var (faces, color, _) in parsedFiles)
+        {
+            foreach (var face in faces)
             {
-                var model = MakeModel(mesh, colour);
-                if (model != null) groupA.Children.Add(model);
+                if (sharedDescs.Contains(face.Descriptor)) continue;
+                var mesh = BuildFaceMesh(face);
+                if (mesh != null && mesh.Positions.Count > 0)
+                    group.Children.Add(MakeFaceModel(mesh, color));
             }
         }
 
-        foreach (var face in facesB)
-        {
-            WpfColor colour;
-            if (face.Descriptor.StartsWith("OTHER|", StringComparison.Ordinal))
-            {
-                colour = ColourComplex;
-            }
-            else if (descA.Contains(face.Descriptor))
-            {
-                colour = ColourMatch;
-            }
-            else
-            {
-                colour = ColourBOnly;
-                bOnlyCount++;
-            }
+        // Clear then assign — prevents WPF from reusing stale frozen content
+        PartsVisual.Content = null;
+        PartsVisual.Content = group;
 
-            var mesh = BuildFaceMesh(face);
-            if (mesh != null)
-            {
-                var model = MakeModel(mesh, colour);
-                if (model != null) groupB.Children.Add(model);
-            }
-        }
+        // Fit camera to combined bounding box
+        var allPoints = parsedFiles
+            .SelectMany(p => p.Faces.SelectMany(f => f.BoundaryPoints))
+            .ToList();
+        FitCamera(allPoints);
+        UpdateCamera();
 
-        ModelA.Content = groupA;
-        ModelB.Content = groupB;
+        BuildLegend(parsedFiles.Select(p => (p.Name, p.Color)).ToList());
 
-        // Compute shared bounds from all boundary-point data
-        ComputeCenter(facesA, facesB);
-        UpdateCameras();
-
+        int sharedCount = parsedFiles[0].Faces.Count(f => sharedDescs.Contains(f.Descriptor));
+        int uniqueCount = parsedFiles.Sum(p => p.Faces.Count(f => !sharedDescs.Contains(f.Descriptor)));
         SummaryLabel.Text =
-            $"A: {facesA.Count} faces   " +
-            $"B: {facesB.Count} faces   " +
-            $"Matching: {matchCount}   " +
-            $"Different: {aOnlyCount + bOnlyCount}";
+            $"Shared faces: {sharedCount}   " +
+            $"Unique faces: {uniqueCount}   " +
+            $"Files compared: {parsedFiles.Count}";
     }
 
-    private static GeometryModel3D? MakeModel(MeshGeometry3D mesh, WpfColor colour)
-    {
-        if (mesh.Positions.Count == 0) return null;
-        var brush = new SolidColorBrush(colour);
-        brush.Freeze();
-        var mat = new DiffuseMaterial(brush);
-        mat.Freeze();
-        return new GeometryModel3D(mesh, mat);
-    }
+    // ── Alignment ──────────────────────────────────────────────────────────
 
-    // ── Mesh building ──────────────────────────────────────────────────────
-
-    private static MeshGeometry3D? BuildFaceMesh(StepFaceGeometry face)
+    private static IReadOnlyList<StepFaceGeometry> CentroidAlign(IReadOnlyList<StepFaceGeometry> faces)
     {
-        return face.SurfaceType switch
+        if (faces.Count == 0) return faces;
+
+        double mnX = double.MaxValue, mxX = double.MinValue;
+        double mnY = double.MaxValue, mxY = double.MinValue;
+        double mnZ = double.MaxValue, mxZ = double.MinValue;
+
+        foreach (var f in faces)
+        foreach (var p in f.BoundaryPoints)
         {
-            "CYLINDRICAL_SURFACE" when face.AxisOrigin != null && face.AxisDirection != null && face.Radius != null
-                => BuildCylinderMesh(face.AxisOrigin, face.AxisDirection, face.Radius.Value, face.BoundaryPoints),
-            _   => BuildPolygonMesh(face.BoundaryPoints)
-        };
+            if (p.Length < 3) continue;
+            if (p[0] < mnX) mnX = p[0]; if (p[0] > mxX) mxX = p[0];
+            if (p[1] < mnY) mnY = p[1]; if (p[1] > mxY) mxY = p[1];
+            if (p[2] < mnZ) mnZ = p[2]; if (p[2] > mxZ) mxZ = p[2];
+        }
+
+        if (mnX > mxX) return faces;
+
+        double cx = (mnX + mxX) / 2.0;
+        double cy = (mnY + mxY) / 2.0;
+        double cz = (mnZ + mxZ) / 2.0;
+
+        return faces.Select(f => f with
+        {
+            BoundaryPoints = (IReadOnlyList<double[]>)f.BoundaryPoints
+                .Select(p => p.Length >= 3 ? new[] { p[0] - cx, p[1] - cy, p[2] - cz } : p)
+                .ToList(),
+            AxisOrigin = f.AxisOrigin != null
+                ? new[] { f.AxisOrigin[0] - cx, f.AxisOrigin[1] - cy, f.AxisOrigin[2] - cz }
+                : null
+        }).ToList();
     }
 
-    /// <summary>
-    /// Build a cylinder side-surface mesh from axis params and boundary vertices.
-    /// Projects boundary points onto the axis to determine height extent.
-    /// </summary>
+    // ── Mesh building ───────────────────────────────────────────────────────
+
+    private static GeometryModel3D MakeFaceModel(MeshGeometry3D mesh, WColor color)
+    {
+        var mat = new DiffuseMaterial(new SolidColorBrush(color));
+        return new GeometryModel3D(mesh, mat) { BackMaterial = mat };
+    }
+
+    private static MeshGeometry3D? BuildFaceMesh(StepFaceGeometry face) =>
+        face.SurfaceType == "CYLINDRICAL_SURFACE"
+            && face.AxisOrigin    != null
+            && face.AxisDirection != null
+            && face.Radius        != null
+            ? BuildCylinderMesh(face.AxisOrigin, face.AxisDirection, face.Radius.Value, face.BoundaryPoints)
+            : BuildPolygonMesh(face.BoundaryPoints);
+
     private static MeshGeometry3D BuildCylinderMesh(
         double[] axisOrigin, double[] axisDir, double radius,
-        IReadOnlyList<double[]> boundaryPoints,
-        int segments = 32)
+        IReadOnlyList<double[]> boundaryPoints, int segments = 32)
     {
-        // Normalise axis direction
         double len = Math.Sqrt(axisDir[0] * axisDir[0] + axisDir[1] * axisDir[1] + axisDir[2] * axisDir[2]);
         if (len < 1e-10) return BuildPolygonMesh(boundaryPoints);
 
         double ax = axisDir[0] / len, ay = axisDir[1] / len, az = axisDir[2] / len;
         double ox = axisOrigin[0], oy = axisOrigin[1], oz = axisOrigin[2];
 
-        // Project boundary points onto axis to find height extent
         double minT = double.MaxValue, maxT = double.MinValue;
         foreach (var p in boundaryPoints)
         {
-            double dx = p[0] - ox, dy = p[1] - oy, dz = p[2] - oz;
-            double t  = dx * ax + dy * ay + dz * az;
+            double t = (p[0] - ox) * ax + (p[1] - oy) * ay + (p[2] - oz) * az;
             if (t < minT) minT = t;
             if (t > maxT) maxT = t;
         }
+        if (maxT - minT < 1e-10) { minT = -radius; maxT = radius; }
 
-        if (maxT - minT < 1e-10)
-        {
-            // degenerate: use radius as a nominal height
-            minT = -radius;
-            maxT =  radius;
-        }
-
-        // Build orthonormal basis perpendicular to axis
         double ux, uy, uz;
-        if (Math.Abs(ax) < 0.9)
-        { ux = 0; uy = az; uz = -ay; }
-        else
-        { ux = -az; uy = 0; uz = ax; }
-        double ulen = Math.Sqrt(ux * ux + uy * uy + uz * uz);
-        if (ulen < 1e-10) ulen = 1;
-        ux /= ulen; uy /= ulen; uz /= ulen;
-
-        // v = axis × u
-        double vx = ay * uz - az * uy;
-        double vy = az * ux - ax * uz;
-        double vz = ax * uy - ay * ux;
+        if (Math.Abs(ax) < 0.9) { ux = 0;   uy =  az; uz = -ay; }
+        else                     { ux = -az; uy =  0;  uz =  ax; }
+        double ul = Math.Sqrt(ux * ux + uy * uy + uz * uz);
+        if (ul < 1e-10) ul = 1;
+        ux /= ul; uy /= ul; uz /= ul;
+        double vx = ay * uz - az * uy, vy = az * ux - ax * uz, vz = ax * uy - ay * ux;
 
         var mesh = new MeshGeometry3D();
-
         for (int i = 0; i <= segments; i++)
         {
             double theta = 2 * Math.PI * i / segments;
-            double cos   = Math.Cos(theta);
-            double sin   = Math.Sin(theta);
-            double nx = cos * ux + sin * vx;
-            double ny = cos * uy + sin * vy;
-            double nz = cos * uz + sin * vz;
+            double cos = Math.Cos(theta), sin = Math.Sin(theta);
+            double nx = cos * ux + sin * vx, ny = cos * uy + sin * vy, nz = cos * uz + sin * vz;
 
-            // Bottom vertex
             mesh.Positions.Add(new Point3D(
                 ox + nx * radius + ax * minT,
                 oy + ny * radius + ay * minT,
                 oz + nz * radius + az * minT));
-
-            // Top vertex
             mesh.Positions.Add(new Point3D(
                 ox + nx * radius + ax * maxT,
                 oy + ny * radius + ay * maxT,
                 oz + nz * radius + az * maxT));
         }
-
-        // Side quads → two triangles each
         for (int i = 0; i < segments; i++)
         {
-            int b0 = i * 2;
-            int t0 = b0 + 1;
-            int b1 = (i + 1) * 2;
-            int t1 = b1 + 1;
-
+            int b0 = i * 2, t0 = b0 + 1, b1 = (i + 1) * 2, t1 = b1 + 1;
             mesh.TriangleIndices.Add(b0); mesh.TriangleIndices.Add(b1); mesh.TriangleIndices.Add(t0);
             mesh.TriangleIndices.Add(t0); mesh.TriangleIndices.Add(b1); mesh.TriangleIndices.Add(t1);
         }
-
         return mesh;
     }
 
-    /// <summary>
-    /// Fan-triangulate a polygon from boundary vertices.
-    /// Uses centroid as the fan origin.
-    /// </summary>
     private static MeshGeometry3D BuildPolygonMesh(IReadOnlyList<double[]> vertices)
     {
         var mesh = new MeshGeometry3D();
         if (vertices.Count < 3) return mesh;
 
-        // Centroid
         double cx = 0, cy = 0, cz = 0;
         foreach (var v in vertices) { cx += v[0]; cy += v[1]; cz += v[2]; }
         cx /= vertices.Count; cy /= vertices.Count; cz /= vertices.Count;
 
-        mesh.Positions.Add(new Point3D(cx, cy, cz)); // index 0 = centroid
-
+        mesh.Positions.Add(new Point3D(cx, cy, cz));
         foreach (var v in vertices)
             mesh.Positions.Add(new Point3D(v[0], v[1], v[2]));
 
         int n = vertices.Count;
         for (int i = 0; i < n; i++)
         {
-            int curr = i + 1;
-            int next = (i + 1) % n + 1;
             mesh.TriangleIndices.Add(0);
-            mesh.TriangleIndices.Add(curr);
-            mesh.TriangleIndices.Add(next);
+            mesh.TriangleIndices.Add(i + 1);
+            mesh.TriangleIndices.Add((i + 1) % n + 1);
         }
-
         return mesh;
     }
 
-    // ── Camera control ─────────────────────────────────────────────────────
+    // ── Legend ──────────────────────────────────────────────────────────────
 
-    private void ComputeCenter(
-        IReadOnlyList<StepFaceGeometry> facesA,
-        IReadOnlyList<StepFaceGeometry> facesB)
+    private void BuildLegend(IReadOnlyList<(string Name, WColor Color)> files)
     {
-        double minX = double.MaxValue, maxX = double.MinValue;
-        double minY = double.MaxValue, maxY = double.MinValue;
-        double minZ = double.MaxValue, maxZ = double.MinValue;
-
-        static void Expand(
-            IReadOnlyList<double[]> pts,
-            ref double mnX, ref double mxX,
-            ref double mnY, ref double mxY,
-            ref double mnZ, ref double mxZ)
-        {
-            foreach (var p in pts)
-            {
-                if (p.Length < 3) continue;
-                if (p[0] < mnX) mnX = p[0]; if (p[0] > mxX) mxX = p[0];
-                if (p[1] < mnY) mnY = p[1]; if (p[1] > mxY) mxY = p[1];
-                if (p[2] < mnZ) mnZ = p[2]; if (p[2] > mxZ) mxZ = p[2];
-            }
-        }
-
-        foreach (var f in facesA) Expand(f.BoundaryPoints, ref minX, ref maxX, ref minY, ref maxY, ref minZ, ref maxZ);
-        foreach (var f in facesB) Expand(f.BoundaryPoints, ref minX, ref maxX, ref minY, ref maxY, ref minZ, ref maxZ);
-
-        if (minX > maxX) { _center = new Point3D(0, 0, 0); _distance = 0.5; return; }
-
-        _center = new Point3D(
-            (minX + maxX) / 2,
-            (minY + maxY) / 2,
-            (minZ + maxZ) / 2);
-
-        double span = Math.Max(maxX - minX, Math.Max(maxY - minY, maxZ - minZ));
-        _distance = span * 1.8;
-        if (_distance < 1e-6) _distance = 0.5;
+        LegendPanel.Children.Clear();
+        AddLegendDot(SharedColor, "Shared geometry");
+        foreach (var (name, color) in files)
+            AddLegendDot(color, name);
     }
 
-    private void UpdateCameras()
+    private void AddLegendDot(WColor color, string label)
+    {
+        var sp = new WStackPanel
+        {
+            Orientation = System.Windows.Controls.Orientation.Horizontal,
+            Margin = new Thickness(0, 0, 18, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        };
+        sp.Children.Add(new WEllipse
+        {
+            Width = 12, Height = 12,
+            Fill  = new SolidColorBrush(color),
+            Margin = new Thickness(0, 0, 4, 0),
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        sp.Children.Add(new WTextBlock
+        {
+            Text = label,
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center
+        });
+        LegendPanel.Children.Add(sp);
+    }
+
+    // ── Camera ──────────────────────────────────────────────────────────────
+
+    private void FitCamera(IReadOnlyList<double[]> points)
+    {
+        if (points.Count == 0) { _distance = 0.5; return; }
+
+        double mnX = double.MaxValue, mxX = double.MinValue;
+        double mnY = double.MaxValue, mxY = double.MinValue;
+        double mnZ = double.MaxValue, mxZ = double.MinValue;
+
+        foreach (var p in points)
+        {
+            if (p.Length < 3) continue;
+            if (p[0] < mnX) mnX = p[0]; if (p[0] > mxX) mxX = p[0];
+            if (p[1] < mnY) mnY = p[1]; if (p[1] > mxY) mxY = p[1];
+            if (p[2] < mnZ) mnZ = p[2]; if (p[2] > mxZ) mxZ = p[2];
+        }
+
+        if (mnX > mxX) { _distance = 0.5; return; }
+
+        _center = new Point3D(
+            (mnX + mxX) / 2.0,
+            (mnY + mxY) / 2.0,
+            (mnZ + mxZ) / 2.0);
+
+        double span = Math.Max(mxX - mnX, Math.Max(mxY - mnY, mxZ - mnZ));
+        _distance = Math.Max(span * 2.5, 1e-6);
+    }
+
+    private void UpdateCamera()
     {
         double az = _azimuth   * Math.PI / 180.0;
         double el = _elevation * Math.PI / 180.0;
-
         double dx = Math.Sin(az) * Math.Cos(el);
         double dy = Math.Sin(el);
         double dz = Math.Cos(az) * Math.Cos(el);
@@ -347,68 +385,54 @@ public partial class StepDiffWindow : Window
             _center.Y + _distance * dy,
             _center.Z + _distance * dz);
 
-        var look = new Vector3D(
-            _center.X - pos.X,
-            _center.Y - pos.Y,
-            _center.Z - pos.Z);
-
-        var up = new Vector3D(0, 1, 0);
-
-        CameraA.Position      = pos;
-        CameraA.LookDirection = look;
-        CameraA.UpDirection   = up;
-
-        CameraB.Position      = pos;
-        CameraB.LookDirection = look;
-        CameraB.UpDirection   = up;
+        MainCamera.Position      = pos;
+        MainCamera.LookDirection = new Vector3D(
+            _center.X - pos.X, _center.Y - pos.Y, _center.Z - pos.Z);
+        MainCamera.UpDirection   = new Vector3D(0, 1, 0);
     }
 
-    // ── Mouse event handlers ───────────────────────────────────────────────
+    // ── Mouse orbit ─────────────────────────────────────────────────────────
 
-    private void Viewport_MouseLeftButtonDown(object sender, WpfMouseButtonEventArgs e)
+    private void Viewport_MouseLeftButtonDown(object sender, WMouseButtonEventArgs e)
     {
         if (sender is not UIElement el) return;
-        _dragStart   = e.GetPosition(el);
-        _isDragging  = true;
+        _dragStart  = e.GetPosition(el);
+        _isDragging = true;
         el.CaptureMouse();
     }
 
-    private void Viewport_MouseMove(object sender, WpfMouseEventArgs e)
+    private void Viewport_MouseMove(object sender, WMouseEventArgs e)
     {
-        if (!_isDragging || e.LeftButton != WpfMouseButtonState.Pressed) return;
+        if (!_isDragging || e.LeftButton != WMouseButtonState.Pressed) return;
         if (sender is not UIElement el) return;
 
-        var pos    = e.GetPosition(el);
-        double dx2 = pos.X - _dragStart.X;
-        double dy2 = pos.Y - _dragStart.Y;
-        _dragStart = pos;
-
-        _azimuth   -= dx2 * 0.4;
-        _elevation  = Math.Clamp(_elevation + dy2 * 0.4, -89.0, 89.0);
-
-        UpdateCameras();
+        var pos = e.GetPosition(el);
+        _azimuth   -= (pos.X - _dragStart.X) * 0.4;
+        _elevation  = Math.Clamp(_elevation + (pos.Y - _dragStart.Y) * 0.4, -89.0, 89.0);
+        _dragStart  = pos;
+        UpdateCamera();
     }
 
-    private void Viewport_MouseLeftButtonUp(object sender, WpfMouseButtonEventArgs e)
+    private void Viewport_MouseLeftButtonUp(object sender, WMouseButtonEventArgs e)
     {
         _isDragging = false;
         if (sender is UIElement el) el.ReleaseMouseCapture();
     }
 
-    private void Viewport_MouseWheel(object sender, WpfMouseWheelEventArgs e)
+    private void Viewport_MouseWheel(object sender, WMouseWheelEventArgs e)
     {
         double factor = e.Delta > 0 ? 0.85 : 1.0 / 0.85;
-        _distance = Math.Max(_distance * factor, 1e-6);
-        UpdateCameras();
+        _distance = Math.Max(_distance * factor, 1e-8);
+        UpdateCamera();
     }
 
-    // ── Buttons ────────────────────────────────────────────────────────────
+    // ── Buttons ─────────────────────────────────────────────────────────────
 
     private void ResetView_Click(object sender, RoutedEventArgs e)
     {
         _azimuth   = 30.0;
-        _elevation = 20.0;
-        UpdateCameras();
+        _elevation = 25.0;
+        UpdateCamera();
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
