@@ -203,6 +203,21 @@ public sealed class StepP21Reader
         return true;
     }
 
+    /// <summary>SPHERICAL_SURFACE → (center in metres, radius in metres).</summary>
+    public bool TryGetSphereParamsFull(int id, out double radiusM, out double[] center)
+    {
+        radiusM = 0; center = [];
+        if (!_raw.TryGetValue(id, out var raw)) return false;
+        var m = Regex.Match(raw,
+            @"SPHERICAL_SURFACE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*\)");
+        if (!m.Success) return false;
+        if (!TryResolveRef(m.Groups[1].Value, out int placeId)) return false;
+        if (!double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out radiusM)) return false;
+        radiusM *= LengthScaleToMetres;
+        TryGetAxisPlacement(placeId, out center, out _, out _);
+        return true;
+    }
+
     /// <summary>TOROIDAL_SURFACE → (major radius in metres, minor radius in metres).</summary>
     public bool TryGetTorusParams(int id, out double majorR, out double minorR)
     {
@@ -273,7 +288,7 @@ public sealed class StepP21Reader
             if (!TryResolveRef(m.Groups[2].Value, out int surfId)) continue;
             string surfType = GetEntityType(surfId) ?? "UNKNOWN";
 
-            var boundaryPoints = CollectBoundaryPoints(boundRefs);
+            var boundaryPoints = CollectBoundaryPoints(boundRefs, surfType);
             BuildSurfaceParams(surfId, surfType,
                 out string descriptor, out double[]? axisOrigin,
                 out double[]? axisDir, out double? radius);
@@ -293,8 +308,14 @@ public sealed class StepP21Reader
 
     // ── GetFaceGeometries helpers ──────────────────────────────────────────
 
-    private List<double[]> CollectBoundaryPoints(IReadOnlyList<int> boundRefs)
+    private List<double[]> CollectBoundaryPoints(IReadOnlyList<int> boundRefs, string surfType)
     {
+        // Only PLANE, CYLINDRICAL_SURFACE, and CONICAL_SURFACE benefit from circle samples:
+        // for PLANE: renders circular caps as proper disks
+        // for CYLINDRICAL/CONICAL: gives accurate height extents
+        // For SPHERICAL_SURFACE: sampling the great-circle boundary creates a large flat disk artifact
+        bool wantCircleSamples = surfType is "PLANE" or "CYLINDRICAL_SURFACE" or "CONICAL_SURFACE";
+
         var seen        = new HashSet<int>();
         var seenCircles = new HashSet<int>();
         var pts         = new List<double[]>();
@@ -344,8 +365,9 @@ public sealed class StepP21Reader
                 }
 
                 // CIRCLE edges: generate 32 sample points around the circumference.
-                // This gives circular faces (caps, flanges) enough vertices to render
-                // as proper disks rather than degenerate single-point geometry.
+                // Only for surface types that need them; spherical faces must be excluded
+                // because sampling the great-circle boundary produces a large flat-disk artifact.
+                if (!wantCircleSamples) continue;
                 if (!TryResolveRef(ecm.Groups[3].Value, out int curveId)) continue;
                 if (!_raw.TryGetValue(curveId, out var curveRaw)) continue;
                 if (!seenCircles.Add(curveId)) continue; // one set of samples per unique CIRCLE entity
@@ -427,8 +449,12 @@ public sealed class StepP21Reader
                 break;
 
             case "SPHERICAL_SURFACE":
-                descriptor = TryGetSphereRadius(surfId, out double rs) ? $"SPHERE|{rs:R}" : "SPHERE|PARSE_ERROR";
-                if (TryGetSphereRadius(surfId, out double rs2)) radius = rs2;
+                if (TryGetSphereParamsFull(surfId, out double rs, out var sphereCen))
+                {
+                    descriptor = $"SPHERE|{rs:R}";
+                    axisOrigin = sphereCen; radius = rs;
+                }
+                else descriptor = "SPHERE|PARSE_ERROR";
                 break;
 
             case "TOROIDAL_SURFACE":

@@ -79,6 +79,22 @@
             <WrapPanel x:Name="LegendPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
         </Border>
 
+        <!-- ── Loading overlay — covers entire window while parsing ────────── -->
+        <Grid Grid.RowSpan="4"
+              x:Name="LoadingOverlay"
+              Background="#CC263238"
+              Visibility="Collapsed"
+              Panel.ZIndex="10">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
+                        MinWidth="240">
+                <ProgressBar IsIndeterminate="True" Height="5"
+                             Foreground="#00E576" Margin="0,0,0,14"/>
+                <TextBlock Text="Parsing STEP files…"
+                           Foreground="White" FontSize="14" FontWeight="SemiBold"
+                           HorizontalAlignment="Center"/>
+            </StackPanel>
+        </Grid>
+
         <!-- ── Button bar ─────────────────────────────────────────────────── -->
         <DockPanel Grid.Row="3" Margin="8,6,8,8">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">

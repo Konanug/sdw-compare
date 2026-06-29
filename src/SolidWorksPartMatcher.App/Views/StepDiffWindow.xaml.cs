@@ -65,10 +65,14 @@ public partial class StepDiffWindow : Window
         PreviewMouseUp    += OnPreviewMouseUp;
         PreviewMouseWheel += OnPreviewMouseWheel;
 
-        // Defer first render until after WPF has fully initialised the Viewport3D
-        Loaded += (_, _) => Dispatcher.BeginInvoke(
-            System.Windows.Threading.DispatcherPriority.Background,
-            new Action(RenderSelected));
+        // Drain the layout queue first, then start the async render
+        Loaded += async (_, _) =>
+        {
+            await Dispatcher.BeginInvoke(
+                System.Windows.Threading.DispatcherPriority.Background,
+                new Action(() => {})).Task;
+            await RenderSelectedAsync();
+        };
     }
 
     // ── File selector ──────────────────────────────────────────────────────
@@ -109,11 +113,11 @@ public partial class StepDiffWindow : Window
         }
     }
 
-    private void Compare_Click(object sender, RoutedEventArgs e) => RenderSelected();
+    private async void Compare_Click(object sender, RoutedEventArgs e) => await RenderSelectedAsync();
 
     // ── Rendering ──────────────────────────────────────────────────────────
 
-    private void RenderSelected()
+    private async Task RenderSelectedAsync()
     {
         var selected = _fileItems.Where(x => x.Cb.IsChecked == true).ToList();
         if (selected.Count < 2)
@@ -122,23 +126,41 @@ public partial class StepDiffWindow : Window
             return;
         }
 
-        var parsedFiles = new List<(IReadOnlyList<StepFaceGeometry> Faces, WColor Color, string Name)>();
+        // Show loading overlay — STEP parsing can take a second on large files
+        LoadingOverlay.Visibility = Visibility.Visible;
+        CompareButton.IsEnabled   = false;
+
+        List<(IReadOnlyList<StepFaceGeometry> Faces, WColor Color, string Name)> parsedFiles;
         try
         {
-            foreach (var (_, path, color) in selected)
+            // Capture loop-local values for the background thread
+            var paths  = selected.Select(x => x.Path).ToList();
+            var colors = selected.Select(x => x.Color).ToList();
+            var names  = selected.Select(x => Path.GetFileName(x.Path)).ToList();
+
+            parsedFiles = await Task.Run(() =>
             {
-                var reader  = StepP21Reader.ParseFile(path);
-                var faces   = reader.GetFaceGeometries();
-                var aligned = CentroidAlign(faces);
-                parsedFiles.Add((aligned, color, Path.GetFileName(path)));
-            }
+                var result = new List<(IReadOnlyList<StepFaceGeometry>, WColor, string)>();
+                for (int i = 0; i < paths.Count; i++)
+                {
+                    var reader  = StepP21Reader.ParseFile(paths[i]);
+                    var faces   = reader.GetFaceGeometries();
+                    var aligned = CentroidAlign(faces);
+                    result.Add((aligned, colors[i], names[i]));
+                }
+                return result;
+            });
         }
         catch (Exception ex)
         {
+            LoadingOverlay.Visibility = Visibility.Collapsed;
+            CompareButton.IsEnabled   = true;
             System.Windows.MessageBox.Show($"Failed to parse STEP file:\n{ex.Message}",
                 "Parse Error", System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Error);
             return;
         }
+
+        // Back on UI thread — build 3D objects and update the viewport
 
         // Shared descriptors = appear in every selected file
         var sharedDescs = parsedFiles
@@ -175,9 +197,11 @@ public partial class StepDiffWindow : Window
         PartsVisual.Content = null;
         PartsVisual.Content = group;
 
-        // Fit camera to combined bounding box
+        // Fit camera using boundary points + sphere surfaces
         var allPoints = parsedFiles
-            .SelectMany(p => p.Faces.SelectMany(f => f.BoundaryPoints))
+            .SelectMany(p => p.Faces.SelectMany(f => f.BoundaryPoints.Count > 0
+                ? f.BoundaryPoints
+                : SphereExtentPoints(f)))
             .ToList();
         FitCamera(allPoints);
         UpdateCamera();
@@ -190,6 +214,20 @@ public partial class StepDiffWindow : Window
             $"Shared faces: {sharedCount}   " +
             $"Unique faces: {uniqueCount}   " +
             $"Files compared: {parsedFiles.Count}";
+
+        LoadingOverlay.Visibility = Visibility.Collapsed;
+        CompareButton.IsEnabled   = true;
+    }
+
+    // Returns 6 cardinal surface points for sphere faces (used for camera fitting when BoundaryPoints is empty)
+    private static IEnumerable<double[]> SphereExtentPoints(StepFaceGeometry f)
+    {
+        if (f.SurfaceType != "SPHERICAL_SURFACE" || f.AxisOrigin == null || f.Radius == null)
+            yield break;
+        double cx = f.AxisOrigin[0], cy = f.AxisOrigin[1], cz = f.AxisOrigin[2], r = f.Radius.Value;
+        yield return new[] { cx + r, cy, cz }; yield return new[] { cx - r, cy, cz };
+        yield return new[] { cx, cy + r, cz }; yield return new[] { cx, cy - r, cz };
+        yield return new[] { cx, cy, cz + r }; yield return new[] { cx, cy, cz - r };
     }
 
     // ── Alignment ──────────────────────────────────────────────────────────
@@ -242,8 +280,42 @@ public partial class StepDiffWindow : Window
             => BuildCylinderMesh(face.AxisOrigin, face.AxisDirection, face.Radius.Value, face.BoundaryPoints),
         "CONICAL_SURFACE" when face.AxisOrigin != null && face.AxisDirection != null
             => BuildFrustumMesh(face.AxisOrigin, face.AxisDirection, face.BoundaryPoints),
+        "SPHERICAL_SURFACE" when face.AxisOrigin != null && face.Radius != null
+            => BuildSphereMesh(face.AxisOrigin, face.Radius.Value),
         _   => BuildPolygonMesh(face.BoundaryPoints, face.AxisDirection)
     };
+
+    private static MeshGeometry3D BuildSphereMesh(double[] center, double radius, int rings = 20, int slices = 32)
+    {
+        var mesh = new MeshGeometry3D();
+        double cx = center[0], cy = center[1], cz = center[2];
+
+        for (int lat = 0; lat <= rings; lat++)
+        {
+            double phi = Math.PI * lat / rings;
+            double sinPhi = Math.Sin(phi), cosPhi = Math.Cos(phi);
+            for (int lon = 0; lon <= slices; lon++)
+            {
+                double theta = 2 * Math.PI * lon / slices;
+                mesh.Positions.Add(new Point3D(
+                    cx + radius * sinPhi * Math.Cos(theta),
+                    cy + radius * cosPhi,
+                    cz + radius * sinPhi * Math.Sin(theta)));
+            }
+        }
+
+        int cols = slices + 1;
+        for (int lat = 0; lat < rings; lat++)
+        {
+            for (int lon = 0; lon < slices; lon++)
+            {
+                int a = lat * cols + lon, b = a + cols;
+                mesh.TriangleIndices.Add(a);   mesh.TriangleIndices.Add(b);     mesh.TriangleIndices.Add(a + 1);
+                mesh.TriangleIndices.Add(a + 1); mesh.TriangleIndices.Add(b); mesh.TriangleIndices.Add(b + 1);
+            }
+        }
+        return mesh;
+    }
 
     private static MeshGeometry3D BuildCylinderMesh(
         double[] axisOrigin, double[] axisDir, double radius,
