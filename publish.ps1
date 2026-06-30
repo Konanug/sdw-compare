@@ -75,13 +75,37 @@ if (-not (Test-Path $exe)) {
 # Remove debug symbol files — end users don't need them.
 Get-ChildItem $outDir -Filter "*.pdb" | Remove-Item -Force
 
-# Zip the output folder.
+# ── Bundle the Python STEP viewer ─────────────────────────────────────────────
+# The viewer is built once by running tools\build_viewer.ps1, which uses
+# PyInstaller to produce a self-contained exe requiring no Python installation.
+Write-Host ""
+Write-Host "Bundling Python viewer..." -ForegroundColor Yellow
+
+$viewerSrc = "$PSScriptRoot\tools\dist\view_steps"
+$viewerDst = "$outDir\viewer"
+
+if (Test-Path $viewerSrc) {
+    Copy-Item $viewerSrc $viewerDst -Recurse -Force
+    $viewerMB = [math]::Round(
+        (Get-ChildItem $viewerDst -Recurse -File | Measure-Object -Property Length -Sum).Sum / 1MB, 0)
+    Write-Host "  Viewer bundled: ~$viewerMB MB" -ForegroundColor DarkGray
+}
+else {
+    Write-Host ""
+    Write-Host "  WARNING: Python viewer bundle not found at tools\dist\view_steps\" -ForegroundColor Yellow
+    Write-Host "  Run  tools\build_viewer.ps1  first, then re-run publish.ps1." -ForegroundColor Yellow
+    Write-Host "  The app will still work, but the 3D Comparison feature will be unavailable" -ForegroundColor Yellow
+    Write-Host "  to end users who do not have Python installed." -ForegroundColor Yellow
+    Write-Host ""
+}
+
+# ── Zip the output folder ─────────────────────────────────────────────────────
 Write-Host ""
 Write-Host "Creating zip..." -ForegroundColor Yellow
 if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
 Compress-Archive -Path "$outDir\*" -DestinationPath $zipPath
 
-$fileCount = (Get-ChildItem $outDir -File).Count
+$fileCount = (Get-ChildItem $outDir -Recurse -File).Count
 $zipBytes  = (Get-Item $zipPath).Length
 $sizeMB    = [math]::Round($zipBytes / 1048576, 1)
 
@@ -91,5 +115,5 @@ Write-Host "  Publish folder : $outDir ($fileCount file(s))"
 Write-Host "  Zip ($sizeMB MB)   : $zipPath"
 Write-Host ""
 Write-Host "Distribute the ZIP. Recipients unzip and run SolidWorksPartMatcher.App.exe."
-Write-Host "Requires: Windows 10/11 x64 + SolidWorks 2024 (licensed)."
+Write-Host "Requires: Windows 10/11 x64 + SolidWorks 2024 (licensed). No Python needed."
 Write-Host ""

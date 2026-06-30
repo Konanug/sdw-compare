@@ -1,9 +1,10 @@
 <Window x:Class="SolidWorksPartMatcher.App.Views.StepDiffWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="3D Part Comparison" Height="720" Width="1050"
+        Title="3D Part Comparison" Height="460" Width="290"
         WindowStartupLocation="CenterOwner"
-        FontFamily="Segoe UI" FontSize="13">
+        FontFamily="Segoe UI" FontSize="13"
+        ResizeMode="CanResizeWithGrip">
 
     <Grid>
         <Grid.RowDefinitions>
@@ -19,92 +20,43 @@
                        FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
         </Border>
 
-        <!-- ── File selector + 3D viewport ───────────────────────────────── -->
-        <Grid Grid.Row="1">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="200"/>
-                <ColumnDefinition Width="*"/>
-            </Grid.ColumnDefinitions>
-
-            <!-- File selector panel -->
-            <Border Grid.Column="0" Background="#ECEFF1"
-                    BorderBrush="#CFD8DC" BorderThickness="0,0,1,0">
-                <DockPanel Margin="10">
-                    <Button DockPanel.Dock="Bottom" x:Name="CompareButton"
-                            Content="Compare Selected"
-                            Padding="8,5" Margin="0,10,0,0"
-                            HorizontalAlignment="Stretch"
-                            Click="Compare_Click"/>
+        <!-- ── File selector ─────────────────────────────────────────────── -->
+        <Border Grid.Row="1" Background="#ECEFF1"
+                BorderBrush="#CFD8DC" BorderThickness="0,0,0,1">
+            <DockPanel Margin="10">
+                <Button DockPanel.Dock="Bottom" x:Name="CompareButton"
+                        Content="Compare Selected"
+                        Padding="8,5" Margin="0,10,0,0"
+                        HorizontalAlignment="Stretch"
+                        Click="Compare_Click"/>
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
                     <StackPanel>
                         <TextBlock Text="Select files to compare:"
                                    FontWeight="SemiBold" Margin="0,0,0,8"
                                    Foreground="#37474F"/>
                         <StackPanel x:Name="FileSelectionPanel"/>
                     </StackPanel>
-                </DockPanel>
-            </Border>
-
-            <!-- Single 3D viewport — all selected parts overlapping -->
-            <Border Grid.Column="1" Background="#F0F4F8">
-            <Viewport3D x:Name="MainViewport"
-                        ClipToBounds="True">
-                <Viewport3D.Camera>
-                    <PerspectiveCamera x:Name="MainCamera"
-                                       Position="0,0,1"
-                                       LookDirection="0,0,-1"
-                                       UpDirection="0,1,0"
-                                       FieldOfView="45"
-                                       NearPlaneDistance="0.00001"
-                                       FarPlaneDistance="10000"/>
-                </Viewport3D.Camera>
-                <!-- Static lights — never replaced between renders -->
-                <ModelVisual3D>
-                    <ModelVisual3D.Content>
-                        <Model3DGroup>
-                            <DirectionalLight Color="#BBBBBB" Direction="-1,-2,-1"/>
-                            <DirectionalLight Color="#666666" Direction="1,1,0.5"/>
-                            <AmbientLight Color="#555555"/>
-                        </Model3DGroup>
-                    </ModelVisual3D.Content>
-                </ModelVisual3D>
-                <!-- Dynamic content replaced on each Compare -->
-                <ModelVisual3D x:Name="PartsVisual"/>
-            </Viewport3D>
-            </Border>
-        </Grid>
-
-        <!-- ── Legend bar ─────────────────────────────────────────────────── -->
-        <Border Grid.Row="2" Background="#ECEFF1" Padding="10,6"
-                BorderBrush="#CFD8DC" BorderThickness="0,1,0,1">
-            <WrapPanel x:Name="LegendPanel" Orientation="Horizontal" VerticalAlignment="Center"/>
+                </ScrollViewer>
+            </DockPanel>
         </Border>
 
-        <!-- ── Loading overlay — covers entire window while parsing ────────── -->
-        <Grid Grid.RowSpan="4"
-              x:Name="LoadingOverlay"
-              Background="#CC263238"
-              Visibility="Collapsed"
-              Panel.ZIndex="10">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center"
-                        MinWidth="240">
-                <ProgressBar IsIndeterminate="True" Height="5"
-                             Foreground="#00E576" Margin="0,0,0,14"/>
-                <TextBlock Text="Parsing STEP files…"
-                           Foreground="White" FontSize="14" FontWeight="SemiBold"
-                           HorizontalAlignment="Center"/>
-            </StackPanel>
-        </Grid>
+        <!-- ── Loading indicator + status ───────────────────────────────── -->
+        <StackPanel Grid.Row="2" Margin="10,6,10,2">
+            <ProgressBar x:Name="LoadingBar"
+                         IsIndeterminate="True"
+                         Height="4"
+                         Foreground="#00E576"
+                         Visibility="Collapsed"
+                         Margin="0,0,0,5"/>
+            <TextBlock x:Name="SummaryLabel"
+                       FontSize="12" Foreground="#455A64"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
 
         <!-- ── Button bar ─────────────────────────────────────────────────── -->
-        <DockPanel Grid.Row="3" Margin="8,6,8,8">
-            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                <Button Content="Reset View" Padding="10,4" Margin="0,0,6,0"
-                        Click="ResetView_Click"/>
-                <Button Content="Close" Padding="10,4" IsCancel="True"
-                        Click="Close_Click"/>
-            </StackPanel>
-            <TextBlock x:Name="SummaryLabel" VerticalAlignment="Center"
-                       FontSize="12" Foreground="#455A64"/>
+        <DockPanel Grid.Row="3" Margin="8,0,8,8">
+            <Button DockPanel.Dock="Right" Content="Close" Padding="10,4"
+                    IsCancel="True" Click="Close_Click"/>
         </DockPanel>
     </Grid>
 </Window>
