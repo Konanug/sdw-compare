@@ -204,6 +204,7 @@
                         <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                             <Setter Property="IsExpanded"
                                     Value="{Binding IsExpanded, Mode=TwoWay}"/>
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                             <Setter Property="AutomationProperties.Name"
                                     Value="{Binding AutomationName}"/>
                         </Style>
@@ -225,6 +226,7 @@
                                         <ColumnDefinition Width="140"/>
                                         <ColumnDefinition Width="240"/>
                                         <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
 
@@ -300,6 +302,19 @@
                                             </ContextMenu>
                                         </Button.ContextMenu>
                                     </Button>
+
+                                    <!-- 3D diff button (STEP groups only, far right) -->
+                                    <Button Grid.Column="4"
+                                            Content="Open 3D View"
+                                            FontSize="11"
+                                            Padding="6,2"
+                                            Margin="4,0,0,0"
+                                            VerticalAlignment="Center"
+                                            Command="{Binding ViewStepDiffCommand}"
+                                            Visibility="{Binding IsStepGroup,
+                                                         Converter={StaticResource BoolVis}}"
+                                            ToolTip="Open 3D comparison view for STEP files in this group"
+                                            AutomationProperties.Name="Open 3D comparison view"/>
                                 </Grid>
                             </Border>
 
@@ -320,32 +335,43 @@
                                                 <ColumnDefinition Width="110"/>
                                             </Grid.ColumnDefinitions>
 
-                                            <!-- Filename -->
-                                            <StackPanel Grid.Column="0" Orientation="Vertical"
+                                            <!-- Filename + format badge + error -->
+                                            <StackPanel Grid.Column="0" Orientation="Horizontal"
                                                         VerticalAlignment="Center">
-                                                <TextBlock Text="{Binding FileName}"
-                                                           ToolTip="{Binding FullPath}"
-                                                           TextTrimming="CharacterEllipsis"
-                                                           VerticalAlignment="Center"/>
-                                                <!-- Error (only when set) -->
-                                                <TextBlock Text="{Binding OpenError}"
-                                                           Foreground="Red" FontSize="11"
-                                                           TextWrapping="Wrap"
-                                                           ToolTip="{Binding OpenError}">
-                                                    <TextBlock.Style>
-                                                        <Style TargetType="TextBlock">
-                                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                                            <Style.Triggers>
-                                                                <DataTrigger Binding="{Binding OpenError}" Value="{x:Null}">
-                                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                                </DataTrigger>
-                                                                <DataTrigger Binding="{Binding OpenError}" Value="">
-                                                                    <Setter Property="Visibility" Value="Collapsed"/>
-                                                                </DataTrigger>
-                                                            </Style.Triggers>
-                                                        </Style>
-                                                    </TextBlock.Style>
-                                                </TextBlock>
+                                                <StackPanel Orientation="Vertical" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding FileName}"
+                                                               ToolTip="{Binding FullPath}"
+                                                               TextTrimming="CharacterEllipsis"
+                                                               VerticalAlignment="Center"/>
+                                                    <!-- Error (only when set) -->
+                                                    <TextBlock Text="{Binding OpenError}"
+                                                               Foreground="Red" FontSize="11"
+                                                               TextWrapping="Wrap"
+                                                               ToolTip="{Binding OpenError}">
+                                                        <TextBlock.Style>
+                                                            <Style TargetType="TextBlock">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding OpenError}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                    <DataTrigger Binding="{Binding OpenError}" Value="">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </TextBlock.Style>
+                                                    </TextBlock>
+                                                </StackPanel>
+                                                <!-- STEP format badge (hidden for SLDPRT) -->
+                                                <Border Margin="6,0,0,0" Background="#E3F2FD"
+                                                        CornerRadius="2" Padding="4,1"
+                                                        VerticalAlignment="Center"
+                                                        Visibility="{Binding IsStepFile,
+                                                                     Converter={StaticResource BoolVis}}">
+                                                    <TextBlock Text="STEP" FontSize="10"
+                                                               Foreground="#1565C0" FontWeight="SemiBold"/>
+                                                </Border>
                                             </StackPanel>
 
                                             <!-- Config badge -->
@@ -358,7 +384,7 @@
                                                            FontSize="11" Foreground="#555"/>
                                             </Border>
 
-                                            <!-- Open in SOLIDWORKS -->
+                                            <!-- Open in SOLIDWORKS / Open File -->
                                             <Button Grid.Column="2"
                                                     HorizontalAlignment="Left"
                                                     Command="{Binding OpenInSolidWorksCommand}"
@@ -366,7 +392,7 @@
                                                     ToolTip="{Binding FullPath}">
                                                 <Button.Style>
                                                     <Style TargetType="Button" BasedOn="{StaticResource ActionBtn}">
-                                                        <Setter Property="Content" Value="Open in SOLIDWORKS"/>
+                                                        <Setter Property="Content" Value="{Binding OpenButtonLabel}"/>
                                                         <Style.Triggers>
                                                             <DataTrigger Binding="{Binding OpenInSolidWorksCommand.IsRunning}" Value="True">
                                                                 <Setter Property="Content"   Value="Opening…"/>

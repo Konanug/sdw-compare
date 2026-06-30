@@ -1,6 +1,7 @@
 using Microsoft.Extensions.Logging;
 using SolidWorksPartMatcher.Application.Interfaces;
 using SolidWorksPartMatcher.Domain.Models;
+using SolidWorksPartMatcher.Infrastructure.Step;
 
 
 namespace SolidWorksPartMatcher.Infrastructure.Orchestration;
@@ -17,7 +18,8 @@ public sealed class ScanOrchestrationService(
     ILogger<ScanOrchestrationService> logger,
     IBodyEquivalenceChecker? bodyChecker = null,
     IDetailedGeometryComparator? geometryComparator = null,
-    ITessellationComparator? tessellationComparator = null) : IScanOrchestrationService
+    ITessellationComparator? tessellationComparator = null,
+    StepGeometryExtractor? stepExtractor = null) : IScanOrchestrationService
 {
     private const double CandidateThreshold = 0.40;
 
@@ -49,7 +51,7 @@ public sealed class ScanOrchestrationService(
                 files.Add(file);
                 Report(progress, "Discovery", file.FileName, files.Count, 0);
             }
-            logger.LogInformation("Discovered {Count} .SLDPRT files", files.Count);
+            logger.LogInformation("Discovered {Count} part files (SLDPRT + STEP)", files.Count);
 
             // Stage 0b: Hashing (parallel, pure .NET)
             Report(progress, "Hashing", $"Hashing {files.Count} files…", 0, files.Count);
@@ -106,7 +108,26 @@ public sealed class ScanOrchestrationService(
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var template = await extractor.ExtractAsync(group[0], "Default", cancellationToken);
+                    var file = group[0];
+                    bool isStep = IsStepFile(file.NormalizedPath);
+                    PartFingerprint? template;
+
+                    if (isStep && stepExtractor != null)
+                    {
+                        // Pure C# path: parse P21 directly — no SolidWorks COM needed for STEP.
+                        template = stepExtractor.Extract(file);
+                    }
+                    else if (isStep)
+                    {
+                        logger.LogWarning("No StepGeometryExtractor registered — skipping STEP file {File}", file.FileName);
+                        template = null;
+                    }
+                    else
+                    {
+                        // SLDPRT: existing SolidWorks COM path — completely unchanged.
+                        template = await extractor.ExtractAsync(file, "Default", cancellationToken);
+                    }
+
                     if (template != null)
                         templateBySha[sha] = template;
                 }
@@ -212,11 +233,32 @@ public sealed class ScanOrchestrationService(
                 fileByScannedId.TryGetValue(fpA.ScannedFileId, out var sfA);
                 fileByScannedId.TryGetValue(fpB.ScannedFileId, out var sfB);
 
+                // Whether either file is a STEP — SW COM stages must be skipped for these.
+                bool hasAnyStep = fpA.SourceFormat == "STEP" || fpB.SourceFormat == "STEP";
+
+                // Stage 3.5: face geometric signature comparison.
+                // Runs whenever both fingerprints carry a FaceGeometricSignature (STEP from P21
+                // parser, SLDPRT from SW COM face enumeration).  Exact sorted-descriptor match →
+                // ExactGeometryMatch; same face count but differing parameters → PossibleMatch.
+                // For SLDPRT-SLDPRT pairs Stage 4 may still upgrade/downgrade this result.
+                if (!isBinaryDup
+                    && fpA.FaceGeometricSignature != null && fpB.FaceGeometricSignature != null)
+                {
+                    var (sigCls, sigReason) = CompareStepFaceSignatures(fpA, fpB, score);
+                    cls = sigCls;
+                    reason = sigReason;
+                    comparatorVersion = "face-sig-1";
+                    logger.LogDebug("Stage 3.5 face-sig result for {A}↔{B}: {Cls}",
+                        sfA?.FileName, sfB?.FileName, cls);
+                }
+
                 // Stage 4: body coincidence — definitive proper-rotation vs reflection test.
-                // Runs for high-score non-binary pairs to confirm ExactGeometryMatch or
-                // correctly classify mirrors. det(R)≈+1 → exact match; det(R)≈-1 → mirror.
+                // Runs for high-score non-binary SLDPRT-SLDPRT pairs to confirm ExactGeometryMatch
+                // or correctly classify mirrors. det(R)≈+1 → exact; det(R)≈-1 → mirror.
+                // Skipped whenever either file is STEP (SW COM cannot reliably open STEP silently).
                 if (bodyChecker != null && sfA != null && sfB != null && !isBinaryDup && !isMirror
-                    && !hasHoleWizardConflict && cls != PartClassification.EngravingVariant && score >= 0.85)
+                    && !hasHoleWizardConflict && cls != PartClassification.EngravingVariant
+                    && !hasAnyStep && score >= 0.85)
                 {
                     try
                     {
@@ -249,7 +291,7 @@ public sealed class ScanOrchestrationService(
                 if (tessellationComparator != null && sfA != null && sfB != null
                     && !isBinaryDup && !isMirror && !hasHoleWizardConflict
                     && cls != PartClassification.EngravingVariant
-                    && stage4Inconclusive && score >= 0.75)
+                    && !hasAnyStep && stage4Inconclusive && score >= 0.75)
                 {
                     try
                     {
@@ -288,7 +330,7 @@ public sealed class ScanOrchestrationService(
                 // already produced a definitive result (ExactGeometryMatch, Mirror, Engraving).
                 if (geometryComparator != null && sfA != null && sfB != null
                     && cls == PartClassification.PossibleMatch && !isBinaryDup
-                    && !hasHoleWizardConflict && score >= 0.70)
+                    && !hasHoleWizardConflict && !hasAnyStep && score >= 0.70)
                 {
                     try
                     {
@@ -477,7 +519,9 @@ public sealed class ScanOrchestrationService(
                                  or PartClassification.ExactGeometryMatch
                                  or PartClassification.GeometryMatchMetadataVariant
                                  or PartClassification.EngravingVariant
-                                 or PartClassification.RevisionFamily)
+                                 or PartClassification.RevisionFamily
+                                 or PartClassification.MirrorOrHandedVariant
+                                 or PartClassification.PossibleMatch)
                 Union(p.FingerprintAId, p.FingerprintBId);
 
         // Cluster IDs are the union-find roots chosen by UnionFindClusterBuilder.
@@ -554,6 +598,44 @@ public sealed class ScanOrchestrationService(
             fp.FeatureTypeHistogram.Keys.Any(k =>
                 k.StartsWith("HoleWzd", StringComparison.OrdinalIgnoreCase));
         return HasWzd(a) != HasWzd(b);
+    }
+
+    // Compares sorted FaceGeometricSignature lists for a STEP-STEP pair.
+    // Exact match → ExactGeometryMatch. Same face count but descriptors differ → PossibleMatch.
+    // Different face count → Distinct (different topology).
+    internal static (PartClassification Classification, string Reason) CompareStepFaceSignatures(
+        PartFingerprint a, PartFingerprint b, double coarseScore)
+    {
+        var sigA = a.FaceGeometricSignature!;
+        var sigB = b.FaceGeometricSignature!;
+
+        if (sigA.Count != sigB.Count)
+            return (PartClassification.Distinct,
+                $"Different face count (A={sigA.Count} B={sigB.Count}); coarse {coarseScore:F2}");
+
+        bool allMatch = true;
+        for (int i = 0; i < sigA.Count; i++)
+        {
+            if (!string.Equals(sigA[i], sigB[i], StringComparison.Ordinal))
+            {
+                allMatch = false;
+                break;
+            }
+        }
+
+        if (allMatch)
+            return (PartClassification.ExactGeometryMatch,
+                $"STEP face signatures match exactly ({sigA.Count} faces); coarse {coarseScore:F2}");
+
+        return (PartClassification.PossibleMatch,
+            $"Same face count ({sigA.Count}) but descriptors differ; coarse {coarseScore:F2}");
+    }
+
+    private static bool IsStepFile(string path)
+    {
+        var ext = Path.GetExtension(path);
+        return string.Equals(ext, ".step", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(ext, ".stp",  StringComparison.OrdinalIgnoreCase);
     }
 
     private static void Report(IProgress<ScanProgress>? p, string stage, string detail, int cur, int total)

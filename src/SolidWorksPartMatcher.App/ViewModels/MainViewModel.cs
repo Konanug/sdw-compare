@@ -129,6 +129,9 @@ public sealed partial class MainViewModel : ObservableObject
         new("Geometry Match",                          PartClassification.ExactGeometryMatch),
         new("Geometry Match (Metadata Variant)",       PartClassification.GeometryMatchMetadataVariant),
         new("Geometry Match (Engraving Variant)",      PartClassification.EngravingVariant),
+        new("Mirror / Handed Variant",                 PartClassification.MirrorOrHandedVariant),
+        new("Revision Family",                         PartClassification.RevisionFamily),
+        new("Possible Match (Needs Review)",           PartClassification.PossibleMatch),
         new("Comparison Failed",                       PartClassification.ComparisonFailed),
     ];
 
@@ -189,7 +192,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var dialog = new System.Windows.Forms.FolderBrowserDialog
         {
-            Description            = "Select a folder containing .SLDPRT files",
+            Description            = "Select a folder containing .SLDPRT or .STEP/.STP files",
             UseDescriptionForTitle = true
         };
         if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
@@ -311,6 +314,7 @@ public sealed partial class MainViewModel : ObservableObject
                     if (!fileById.TryGetValue(fp.ScannedFileId, out var sf)) return null;
                     return new MatchFileViewModel(
                         sf.Id, sf.NormalizedPath, fp.ConfigName,
+                        fp.SourceFormat,
                         _opener,
                         _loggerFactory.CreateLogger<MatchFileViewModel>());
                 })

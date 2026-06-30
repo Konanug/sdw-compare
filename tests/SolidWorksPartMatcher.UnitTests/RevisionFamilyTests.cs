@@ -92,8 +92,11 @@ public sealed class RevisionFamilyTests
     }
 
     [Fact]
-    public void PossibleMatchPair_DoesNotJoin_IntoSameCluster()
+    public void PossibleMatchPair_JoinsIntoReviewCluster()
     {
+        // PossibleMatch pairs are grouped together as a review cluster so the user
+        // can see and adjudicate them in the UI.  The cluster is classified as
+        // PossibleMatch (not ExactGeometryMatch) and flagged NeedsReview.
         var runId = Guid.NewGuid();
         var fpA   = MakeFp("sha1");
         var fpB   = MakeFp("sha2");
@@ -115,8 +118,9 @@ public sealed class RevisionFamilyTests
         var builder = new UnionFindClusterBuilder();
         var clusters = builder.BuildClusters(runId, [fpA, fpB], [pair], files, new FakeNameService());
 
-        // PossibleMatch must NOT auto-join — each stays its own singleton.
-        clusters.Should().HaveCount(2);
+        clusters.Should().HaveCount(1, "PossibleMatch pair must appear as a single review group");
+        clusters[0].Classification.Should().Be(PartClassification.PossibleMatch);
+        clusters[0].ReviewStatus.Should().Be(ReviewStatus.NeedsReview);
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────

@@ -24,9 +24,9 @@ namespace SolidWorksPartMatcher.SolidWorks;
 /// </summary>
 public sealed class SolidWorksPartFingerprintExtractor : IPartFingerprintExtractor
 {
-    public int ExtractorVersion => 7;
+    public int ExtractorVersion => 8;
 
-    private const string ExtractorLabel = "sw2024-real-7";
+    private const string ExtractorLabel = "sw2024-real-8";
     private const int SwDocPart = (int)swDocumentTypes_e.swDocPART;
 
     // ReadOnly is intentionally omitted so SetSuppression2 calls succeed.
@@ -170,6 +170,7 @@ public sealed class SolidWorksPartFingerprintExtractor : IPartFingerprintExtract
         var (material, customProps) = ExtractMetadata(doc, configName, file.FileName);
         var chiralitySign = ExtractChirality(doc, file.FileName);
         var comOffsetInBB = ComputeCoMOffsetInBB(com, rawBB);
+        var faceSignature = ExtractFaceGeometricSignature(doc, file.FileName);
 
         if (sketchTextCutCount > 0)
             _logger.LogInformation(
@@ -243,7 +244,132 @@ public sealed class SolidWorksPartFingerprintExtractor : IPartFingerprintExtract
             SuppressedSurfaceAreaM2: suppSA,
             SuppressedFaceCount: suppFace,
             SuppressedEdgeCount: suppEdge,
-            SuppressedVertexCount: suppVert);
+            SuppressedVertexCount: suppVert,
+            SourceFormat: "SLDPRT",
+            FaceGeometricSignature: faceSignature);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Face geometric signature (cross-format comparison key)
+    // Extracts sorted canonical face descriptor strings in the same format produced
+    // by StepGeometryExtractor so signatures are directly comparable across formats.
+    //
+    // SW API refs (verified against SolidWorks.Interop.sldworks, SW 2024):
+    //   IBody2.GetFaces()         → object[] of IFace2
+    //   IFace2.GetSurface()       → object (cast to ISurface)
+    //   ISurface.IsPlane/IsCylinder/IsCone/IsSphere/IsTorus() → bool
+    //   ISurface.PlaneParams      → double[6]: [nx,ny,nz, ox,oy,oz]
+    //   ISurface.CylinderParams   → double[7]: [ox,oy,oz, nx,ny,nz, r]   (SI metres)
+    //   ISurface.ConeParams       → double[8]: [ox,oy,oz, nx,ny,nz, ha, r]
+    //   ISurface.SphereParams     → double[4]: [cx,cy,cz, r]
+    //   ISurface.TorusParams      → double[8]: [cx,cy,cz, nx,ny,nz, R_major, r_minor]
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private IReadOnlyList<string>? ExtractFaceGeometricSignature(IModelDoc2 doc, string fileName)
+    {
+        var toRelease = new List<object>();
+        try
+        {
+            var partDoc = (IPartDoc)doc;
+            var solidObj = partDoc.GetBodies2((int)swBodyType_e.swSolidBody, false);
+            if (solidObj is not object[] bodies || bodies.Length == 0) return null;
+
+            var descriptors = new List<string>();
+
+            foreach (var bObj in bodies)
+            {
+                if (bObj is not IBody2 body) { if (bObj != null) toRelease.Add(bObj); continue; }
+                toRelease.Add(body);
+
+                var facesObj = body.GetFaces();
+                if (facesObj is not object[] faceArr) continue;
+
+                foreach (var fObj in faceArr)
+                {
+                    if (fObj is not IFace2 face) { if (fObj != null) toRelease.Add(fObj); continue; }
+                    toRelease.Add(face);
+
+                    var surfObj = face.GetSurface();
+                    if (surfObj is not ISurface surf)
+                    {
+                        if (surfObj != null) toRelease.Add(surfObj);
+                        continue;
+                    }
+                    toRelease.Add(surf);
+
+                    var desc = BuildSurfaceDescriptor(surf);
+                    if (desc != null) descriptors.Add(desc);
+                }
+            }
+
+            if (descriptors.Count == 0) return null;
+            descriptors.Sort(StringComparer.Ordinal);
+            return descriptors.AsReadOnly();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "Face geometric signature extraction failed for {File}", fileName);
+            return null;
+        }
+        finally
+        {
+            ReleaseComArray(toRelease);
+        }
+    }
+
+    private static string? BuildSurfaceDescriptor(ISurface surf)
+    {
+        try
+        {
+            if (surf.IsPlane())
+            {
+                if (surf.PlaneParams is not double[] p || p.Length < 6) return null;
+                double[] n = [p[0], p[1], p[2]];
+                CanonicalizeAxis(n);
+                return $"PLANE|{n[0]:F4}|{n[1]:F4}|{n[2]:F4}";
+            }
+            if (surf.IsCylinder())
+            {
+                if (surf.CylinderParams is not double[] p || p.Length < 7) return null;
+                double[] axis = [p[3], p[4], p[5]];
+                CanonicalizeAxis(axis);
+                return $"CYLINDER|{p[6]:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}";
+            }
+            if (surf.IsCone())
+            {
+                if (surf.ConeParams is not double[] p || p.Length < 8) return null;
+                double[] axis = [p[3], p[4], p[5]];
+                CanonicalizeAxis(axis);
+                return $"CONE|{p[6]:F6}|{p[7]:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}";
+            }
+            if (surf.IsSphere())
+            {
+                if (surf.SphereParams is not double[] p || p.Length < 4) return null;
+                return $"SPHERE|{p[3]:R}";
+            }
+            if (surf.IsTorus())
+            {
+                if (surf.TorusParams is not double[] p || p.Length < 8) return null;
+                return $"TORUS|{p[6]:R}|{p[7]:R}";
+            }
+            return null; // B-spline or complex surface — skip for signature
+        }
+        catch { return null; }
+    }
+
+    // Normalizes a direction vector so the dominant component is positive.
+    // Same logic as StepGeometryExtractor.CanonicalizeAxis — ensures cross-format
+    // descriptors are comparable when axis directions differ by sign convention.
+    private static void CanonicalizeAxis(double[] axis)
+    {
+        if (axis.Length < 3) return;
+        int dom = 0;
+        for (int i = 1; i < 3; i++)
+            if (Math.Abs(axis[i]) > Math.Abs(axis[dom])) dom = i;
+        if (axis[dom] < 0)
+            for (int i = 0; i < axis.Length; i++) axis[i] = -axis[i];
+        for (int i = 0; i < axis.Length; i++)
+            if (Math.Abs(axis[i]) < 1e-9) axis[i] = 0.0;
     }
 
     // Computes the sign of det([principalAxis1 | principalAxis2 | principalAxis3]).
