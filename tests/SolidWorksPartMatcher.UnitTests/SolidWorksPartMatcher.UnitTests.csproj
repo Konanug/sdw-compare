@@ -18,5 +18,6 @@
     <ProjectReference Include="..\..\src\SolidWorksPartMatcher.Domain\SolidWorksPartMatcher.Domain.csproj" />
     <ProjectReference Include="..\..\src\SolidWorksPartMatcher.Application\SolidWorksPartMatcher.Application.csproj" />
     <ProjectReference Include="..\..\src\SolidWorksPartMatcher.Infrastructure\SolidWorksPartMatcher.Infrastructure.csproj" />
+    <ProjectReference Include="..\..\src\SolidWorksPartMatcher.Excel\SolidWorksPartMatcher.Excel.csproj" />
   </ItemGroup>
 </Project>

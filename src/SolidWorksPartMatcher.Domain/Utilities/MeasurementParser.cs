@@ -11,11 +11,27 @@ namespace SolidWorksPartMatcher.Domain.Utilities;
 ///   "6/8"      → 0.75         displayed as "0.75"
 ///   "0.553231" → 0.553231     displayed as "0.55"
 ///   "0.55"     → 0.55         displayed as "0.55"
+///   "3/8in"    → 9.525 mm     (0.375 × 25.4)
+///   "12.7mm"   → 12.7 mm
 ///
 /// Tolerance comparisons must use the full-precision double, not the display string.
 /// </summary>
 public static class MeasurementParser
 {
+    public enum LengthUnit { Unknown, Millimetre, Inch }
+
+    private const double InchToMm = 25.4;
+
+    // Ordered longest-first so "inches" is matched before "inch", "inch" before "in".
+    private static readonly (string Suffix, LengthUnit Unit)[] UnitSuffixes =
+    [
+        ("inches", LengthUnit.Inch),
+        ("inch",   LengthUnit.Inch),
+        ("in",     LengthUnit.Inch),
+        ("\"",     LengthUnit.Inch),
+        ("mm",     LengthUnit.Millimetre),
+    ];
+
     /// <summary>
     /// Parses a measurement string into a double. Handles:
     ///   • Fractions:  "1/7", "3/8", "6/8"
@@ -47,6 +63,37 @@ public static class MeasurementParser
         }
 
         return double.TryParse(s, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+    }
+
+    /// <summary>
+    /// Tries to parse a measurement string that may carry a unit suffix ("in", "mm", etc.).
+    /// When a recognised suffix is present, the numeric part is converted to millimetres
+    /// (inches × 25.4; mm stays as-is). When no suffix is found, unit is Unknown and
+    /// millimetres contains the raw parsed number without conversion.
+    /// Returns false when the string is null, empty, or cannot be parsed.
+    /// </summary>
+    public static bool TryParseToMm(string? input, out double millimetres, out LengthUnit unit)
+    {
+        millimetres = 0;
+        unit = LengthUnit.Unknown;
+        if (string.IsNullOrWhiteSpace(input)) return false;
+
+        var s = input.Trim();
+        var numeric = s;
+
+        foreach (var (suffix, u) in UnitSuffixes)
+        {
+            if (s.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+            {
+                numeric = s[..^suffix.Length].TrimEnd();
+                unit = u;
+                break;
+            }
+        }
+
+        if (!TryParseNumber(numeric, out var raw)) return false;
+        millimetres = unit == LengthUnit.Inch ? raw * InchToMm : raw;
+        return true;
     }
 
     /// <summary>

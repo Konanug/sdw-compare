@@ -147,14 +147,40 @@ public sealed class WeightedCandidateScorer : ICandidateScorer
     }
 
     // Two property values are equivalent when:
-    //   • Both parse as numbers and round to the same two decimal places, OR
-    //   • They are the same string (case-insensitive).
+    //   • They are the same string (case-insensitive), OR
+    //   • At least one side carries an explicit unit suffix (in/mm): both are converted
+    //     to mm and compared with 0.5 mm tolerance or 2 dp equivalence.
+    //     A unitless side inherits the unit of the explicit side — "3/8in" vs "0.375"
+    //     treats "0.375" as 0.375 inches → 9.525 mm vs 9.525 mm → equal.
+    //   • Both parse as unit-less numbers that round to the same two decimal places.
     // Full-precision doubles are used for comparison; rounding only determines equality.
     internal static bool AreEquivalentPropertyValues(string a, string b)
     {
         if (string.Equals(a.Trim(), b.Trim(), StringComparison.OrdinalIgnoreCase))
             return true;
 
+        var okA = MeasurementParser.TryParseToMm(a, out var aMm, out var unitA);
+        var okB = MeasurementParser.TryParseToMm(b, out var bMm, out var unitB);
+
+        // Unit-aware path: enter when at least one side has an explicit unit.
+        // The unitless side inherits the explicit side's unit for conversion.
+        if (okA && okB &&
+            (unitA != MeasurementParser.LengthUnit.Unknown ||
+             unitB != MeasurementParser.LengthUnit.Unknown))
+        {
+            var refUnit = unitA != MeasurementParser.LengthUnit.Unknown ? unitA : unitB;
+            if (unitA == MeasurementParser.LengthUnit.Unknown &&
+                refUnit == MeasurementParser.LengthUnit.Inch)
+                aMm *= 25.4;
+            if (unitB == MeasurementParser.LengthUnit.Unknown &&
+                refUnit == MeasurementParser.LengthUnit.Inch)
+                bMm *= 25.4;
+
+            return Math.Abs(aMm - bMm) <= 0.5 ||
+                   MeasurementParser.FormatDisplay(aMm) == MeasurementParser.FormatDisplay(bMm);
+        }
+
+        // Unit-less: compare as pure numbers at 2 decimal places.
         if (MeasurementParser.TryParseNumber(a, out var na) &&
             MeasurementParser.TryParseNumber(b, out var nb))
         {

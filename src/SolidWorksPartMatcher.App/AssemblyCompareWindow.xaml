@@ -1,0 +1,75 @@
+<Window x:Class="SolidWorksPartMatcher.App.AssemblyCompareWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="SolidWorks Assembly Comparator" Height="360" Width="640"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize"
+        FontFamily="Segoe UI" FontSize="13">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Border Grid.Row="0" BorderBrush="#DDD" BorderThickness="0,0,0,1" Padding="16,10">
+            <StackPanel>
+                <TextBlock Text="Compare 3D Assemblies"
+                           FontSize="15" FontWeight="SemiBold"/>
+                <TextBlock Foreground="#666" FontSize="12" Margin="0,2,0,0"
+                           Text="Select two assembly files to compare. STEP files (.step/.stp) are supported for now."/>
+            </StackPanel>
+        </Border>
+
+        <!-- File pickers -->
+        <StackPanel Grid.Row="1" Margin="16,20,16,0">
+
+            <TextBlock Text="Assembly A" FontWeight="SemiBold" FontSize="12" Foreground="#37474F" Margin="0,0,0,4"/>
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="FileABox" Grid.Column="0" IsReadOnly="True" Padding="6,5"
+                         Background="#FAFAFA" BorderBrush="#CCC"
+                         Text="No file selected"
+                         AutomationProperties.Name="Assembly A file path"/>
+                <Button Grid.Column="2" Content="Browse…" Padding="12,5" Click="BrowseA_Click"
+                        AutomationProperties.Name="Browse for assembly A"/>
+            </Grid>
+
+            <TextBlock Text="Assembly B" FontWeight="SemiBold" FontSize="12" Foreground="#37474F" Margin="0,0,0,4"/>
+            <Grid Margin="0,0,0,16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="10"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBox x:Name="FileBBox" Grid.Column="0" IsReadOnly="True" Padding="6,5"
+                         Background="#FAFAFA" BorderBrush="#CCC"
+                         Text="No file selected"
+                         AutomationProperties.Name="Assembly B file path"/>
+                <Button Grid.Column="2" Content="Browse…" Padding="12,5" Click="BrowseB_Click"
+                        AutomationProperties.Name="Browse for assembly B"/>
+            </Grid>
+
+            <TextBlock x:Name="StatusText" Foreground="#C62828" FontSize="12"
+                       TextWrapping="Wrap" Margin="0,0,0,0"/>
+        </StackPanel>
+
+        <!-- Button bar -->
+        <Border Grid.Row="2" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="16,10">
+            <DockPanel>
+                <Button DockPanel.Dock="Left" Content="Back" Padding="12,5"
+                        Click="Back_Click"
+                        AutomationProperties.Name="Back to launcher"/>
+                <Button DockPanel.Dock="Right" x:Name="CompareButton" Content="Compare"
+                        Padding="16,5" Click="Compare_Click"
+                        AutomationProperties.Name="Compare assemblies"/>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

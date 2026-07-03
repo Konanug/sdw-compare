@@ -18,6 +18,10 @@ public sealed class StepP21Reader
     // Detected length unit scale factor: multiply P21 lengths by this to get metres.
     public double LengthScaleToMetres { get; private set; } = 1e-3; // default: mm
 
+    // FILE_SCHEMA name from the HEADER section (e.g. "CONFIG_CONTROL_DESIGN", "AUTOMOTIVE_DESIGN").
+    // Null if the header wasn't parsed (only DATA-section entities are captured by Parse()).
+    public string? SchemaName { get; private set; }
+
     // ── Factory ────────────────────────────────────────────────────────────
 
     public static StepP21Reader ParseFile(string path)
@@ -27,9 +31,29 @@ public sealed class StepP21Reader
         return reader;
     }
 
+    /// <summary>Parses P21 text directly (no file I/O) — used by callers that already hold
+    /// the file content in memory, and by tests constructing synthetic STEP fixtures.</summary>
+    public static StepP21Reader ParseText(string text)
+    {
+        var reader = new StepP21Reader();
+        reader.Parse(text);
+        return reader;
+    }
+
     // ── Low-level entity resolution ────────────────────────────────────────
 
     public bool TryGetRaw(int id, out string raw) => _raw.TryGetValue(id, out raw!);
+
+    /// <summary>Every entity id present in the file's DATA section.</summary>
+    public IEnumerable<int> AllEntityIds() => _raw.Keys;
+
+    /// <summary>Every entity id whose primary type name equals <paramref name="type"/>.</summary>
+    public IEnumerable<int> EntityIdsOfType(string type)
+        => _raw.Where(kv => GetEntityType(kv.Key) == type).Select(kv => kv.Key);
+
+    /// <summary>All entity ids (<c>#nnn</c> tokens) referenced anywhere in entity <paramref name="id"/>'s raw text.</summary>
+    public IReadOnlyList<int> GetReferencedIds(int id)
+        => _raw.TryGetValue(id, out var raw) ? ParseRefList(raw) : [];
 
     /// <summary>Returns the primary entity type name for entity <paramref name="id"/>.</summary>
     public string? GetEntityType(int id)
@@ -235,11 +259,16 @@ public sealed class StepP21Reader
 
     // ── Collections ────────────────────────────────────────────────────────
 
-    /// <summary>Returns (surfaceEntityId, orientation) for every ADVANCED_FACE in the file.</summary>
-    public IReadOnlyList<(int SurfaceId, bool Outward)> GetAdvancedFaces()
+    /// <summary>Returns (surfaceEntityId, orientation) for every ADVANCED_FACE in the file,
+    /// or only those whose entity id is in <paramref name="restrictToIds"/> when supplied
+    /// (used to scope extraction to a single assembly component's entity closure).</summary>
+    public IReadOnlyList<(int SurfaceId, bool Outward)> GetAdvancedFaces(HashSet<int>? restrictToIds = null)
     {
         var faces = new List<(int, bool)>();
-        foreach (var (_, raw) in _raw)
+        var source = restrictToIds is null
+            ? _raw
+            : _raw.Where(kv => restrictToIds.Contains(kv.Key));
+        foreach (var (_, raw) in source)
         {
             // ADVANCED_FACE ( 'name', ( bounds... ), surface_ref, .T. )
             var m = Regex.Match(raw,
@@ -251,11 +280,13 @@ public sealed class StepP21Reader
         return faces;
     }
 
-    /// <summary>Returns all CARTESIAN_POINT coordinates (in metres) in the file.</summary>
-    public IReadOnlyList<double[]> GetAllCartesianPoints()
+    /// <summary>Returns all CARTESIAN_POINT coordinates (in metres) in the file, or only those
+    /// whose entity id is in <paramref name="restrictToIds"/> when supplied.</summary>
+    public IReadOnlyList<double[]> GetAllCartesianPoints(HashSet<int>? restrictToIds = null)
     {
         var pts = new List<double[]>();
-        foreach (var (id, _) in _raw)
+        var ids = restrictToIds is null ? (IEnumerable<int>)_raw.Keys : restrictToIds;
+        foreach (var id in ids)
         {
             if (TryGetCartesianPoint(id, out var xyz))
                 pts.Add(xyz);
@@ -493,6 +524,9 @@ public sealed class StepP21Reader
 
     private void Parse(string text)
     {
+        var schemaMatch = Regex.Match(text, @"FILE_SCHEMA\s*\(\s*\(\s*'([^']*)'");
+        if (schemaMatch.Success) SchemaName = schemaMatch.Groups[1].Value;
+
         // Collapse multi-line entity continuations into single lines.
         // P21 entities end with ' ;' — any line not ending with ';' continues.
         var lines = new List<string>();

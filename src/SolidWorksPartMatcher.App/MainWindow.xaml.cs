@@ -13,6 +13,13 @@ public partial class MainWindow : Window
         DataContext = App.Services.GetRequiredService<MainViewModel>();
     }
 
+    private void BackToLauncher_Click(object sender, RoutedEventArgs e)
+    {
+        var launcher = new LauncherWindow();
+        launcher.Show();
+        Close();
+    }
+
     // Opens the group ContextMenu when the ⋮ button is clicked.
     // Stops event propagation so TreeViewItem selection/expansion is not triggered.
     private void GroupActionsButton_Click(object sender, RoutedEventArgs e)
