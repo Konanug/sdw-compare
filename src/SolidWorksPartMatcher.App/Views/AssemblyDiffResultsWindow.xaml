@@ -8,12 +8,25 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
+        <!-- ── Comparison bar: which two files this result is for ──────────── -->
+        <Border Grid.Row="0" Background="#37474F" Padding="14,8">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Old file:" Foreground="#B0BEC5" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding OldFileLabel}" ToolTip="{Binding OldFilePath}"
+                           Foreground="White" FontWeight="SemiBold" Margin="0,0,24,0"/>
+                <TextBlock Text="New file:" Foreground="#B0BEC5" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding NewFileLabel}" ToolTip="{Binding NewFilePath}"
+                           Foreground="White" FontWeight="SemiBold"/>
+            </StackPanel>
+        </Border>
+
         <!-- ── Summary bar ────────────────────────────────────────────────── -->
-        <Border Grid.Row="0" Background="#263238" Padding="14,10">
+        <Border Grid.Row="1" Background="#263238" Padding="14,10">
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="{Binding UnchangedCount, StringFormat='Unchanged: {0}'}"
                            Foreground="#A5D6A7" Margin="0,0,20,0"/>
@@ -26,14 +39,12 @@
                 <TextBlock Text="{Binding SuspiciousCount, StringFormat='Suspicious: {0}'}"
                            Foreground="#FFCC80" Margin="0,0,20,0"/>
                 <TextBlock Text="{Binding QuantityChangeCount, StringFormat='Quantity Change: {0}'}"
-                           Foreground="#CE93D8" Margin="0,0,20,0"/>
-                <TextBlock Text="{Binding PlacementChangeCount, StringFormat='Placement Change: {0}'}"
-                           Foreground="#80DEEA"/>
+                           Foreground="#CE93D8"/>
             </StackPanel>
         </Border>
 
         <!-- ── Results grid ───────────────────────────────────────────────── -->
-        <DataGrid Grid.Row="1" ItemsSource="{Binding Rows}"
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Rows}"
                   AutoGenerateColumns="False" IsReadOnly="True"
                   CanUserAddRows="False" CanUserDeleteRows="False"
                   GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#D0D0D0"
@@ -65,11 +76,7 @@
                                      ElementStyle="{StaticResource CellText}"/>
                 <DataGridTextColumn Header="Qty A → B" Binding="{Binding QuantityLabel}" Width="110"
                                      ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="BB Δ (L / W / H)" Binding="{Binding BoundingBoxDeltaLabel}" Width="200"
-                                     ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="BB Volume Δ" Binding="{Binding BoundingBoxVolumeDeltaLabel}" Width="110"
-                                     ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="Est. Volume Δ" Binding="{Binding VolumeDeltaLabel}" Width="110"
+                <DataGridTextColumn Header="Volume Δ" Binding="{Binding VolumeDeltaLabel}" Width="110"
                                      ElementStyle="{StaticResource CellText}"/>
                 <DataGridTextColumn Header="What changed" Binding="{Binding ReasonText}" Width="*">
                     <DataGridTextColumn.ElementStyle>
@@ -96,7 +103,7 @@
         </DataGrid>
 
         <!-- ── Button bar ─────────────────────────────────────────────────── -->
-        <Border Grid.Row="2" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,8">
+        <Border Grid.Row="3" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,8">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Left" Text="{Binding StatusMessage}"
                            Foreground="#666" VerticalAlignment="Center"/>

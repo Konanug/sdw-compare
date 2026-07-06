@@ -9,6 +9,17 @@ namespace SolidWorksPartMatcher.Infrastructure.Assembly;
 /// Matches components between two parsed assembly versions and classifies each pair.
 /// Pure logic — no P21/file dependency — so it's easy to unit test against hand-built
 /// <see cref="AssemblyComponent"/> fixtures.
+///
+/// Classification is driven SOLELY by real (OCCT) volume — bounding box is no longer part of
+/// the "did this part change" decision at all (it produced skewed/false results: a small local
+/// feature could swing one bbox axis disproportionately while true volume barely moved, and
+/// vice versa). Bounding box is still used, unchanged, as one input among several to the
+/// geometric-fallback SIMILARITY score (<see cref="GeometricSimilarity"/>) that identifies
+/// probable renames — that's a different concern (which parts correspond to which) from
+/// deciding whether a confirmed-same part changed.
+///
+/// Orientation/position tracking has been removed entirely for now (to be revisited later) —
+/// this matcher only ever reports shape/volume and quantity differences.
 /// </summary>
 public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
 {
@@ -63,7 +74,6 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
                 MatchKey: compA.MatchKey, ComponentA: compA, ComponentB: null,
                 DiffType: AssemblyDiffType.Removed, QuantityChanged: false,
                 InstanceCountA: compA.InstanceCount, InstanceCountB: 0,
-                BoundingBoxDeltaPercent: null, BoundingBoxVolumeDeltaPercent: null,
                 VolumeDeltaPercent: null, SurfaceAreaDeltaPercent: null,
                 FaceCountDelta: null, GeometricSimilarityScore: null,
                 Reasons: ["Part removed."]));
@@ -72,7 +82,6 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
                 MatchKey: compB.MatchKey, ComponentA: null, ComponentB: compB,
                 DiffType: AssemblyDiffType.Added, QuantityChanged: false,
                 InstanceCountA: 0, InstanceCountB: compB.InstanceCount,
-                BoundingBoxDeltaPercent: null, BoundingBoxVolumeDeltaPercent: null,
                 VolumeDeltaPercent: null, SurfaceAreaDeltaPercent: null,
                 FaceCountDelta: null, GeometricSimilarityScore: null,
                 Reasons: ["Part added."]));
@@ -85,20 +94,14 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         return new AssemblyDiffSummary(fileAPath, fileBPath, DateTime.UtcNow, ordered, warnings);
     }
 
-    // Quantity/placement-only changes (geometry Unchanged, but instance count or assembly
-    // position/orientation differs) get their own sort slots between Modified and true
-    // Unchanged — they're distinct, worth-a-look categories, not noise mixed into "nothing
-    // changed."
     private static int SortPriority(AssemblyComponentDiff d) => d.DiffType switch
     {
         AssemblyDiffType.Removed => 0,
         AssemblyDiffType.Added => 1,
         AssemblyDiffType.SuspiciousMatch => 2,
         AssemblyDiffType.Modified => 3,
-        AssemblyDiffType.Unchanged => d.QuantityChanged ? 4
-            : (d.OrientationChanged == true || d.PositionChanged == true) ? 5
-            : 6,
-        _ => 7
+        AssemblyDiffType.Unchanged => d.QuantityChanged ? 4 : 5,
+        _ => 6
     };
 
     private static Dictionary<string, AssemblyComponent> BuildKeyIndex(
@@ -118,10 +121,6 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         string key, AssemblyComponent compA, AssemblyComponent compB,
         AssemblyDiffTolerances tol, double? geometricSimilarity)
     {
-        var bbDelta = BoundingBoxDeltaPercent(compA.SortedBoundingBoxM, compB.SortedBoundingBoxM);
-        double bbVolA = compA.SortedBoundingBoxM[0] * compA.SortedBoundingBoxM[1] * compA.SortedBoundingBoxM[2];
-        double bbVolB = compB.SortedBoundingBoxM[0] * compB.SortedBoundingBoxM[1] * compB.SortedBoundingBoxM[2];
-        double bbVolDeltaPct = RelativeDeltaPercent(bbVolA, bbVolB);
         double volDeltaPct = RelativeDeltaPercent(compA.VolumeM3, compB.VolumeM3);
         double saDeltaPct  = RelativeDeltaPercent(compA.SurfaceAreaM2, compB.SurfaceAreaM2);
         int faceDelta      = compB.FaceCount - compA.FaceCount;
@@ -129,12 +128,25 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         bool quantityChanged = compA.InstanceCount.HasValue && compB.InstanceCount.HasValue
             && compA.InstanceCount.Value != compB.InstanceCount.Value;
 
-        bool withinTolerance = IsWithinTolerance(compA.SortedBoundingBoxM, bbDelta, volDeltaPct, tol);
+        // Volume is the SOLE "did this part change" signal — see this class's own doc comment
+        // for why bounding box was removed from this decision entirely. tol.VolumeDeltaPercentThreshold
+        // is a near-zero floor (floating-point noise only), not a real tolerance: any genuine
+        // volume difference, however small, is reported as Modified.
+        bool volumeUnchanged = Math.Abs(volDeltaPct) <= tol.VolumeDeltaPercentThreshold;
 
+        // Only one suspicion trigger remains: an EXACT-NAME match whose overall shape looks
+        // nothing alike (suspiciousNameCollision) — a real, distinct signal ("is this name being
+        // reused for a different part entirely?"), not a volume-based judgment call. The former
+        // second trigger ("matched by shape, but sizes are very different", gating a fallback
+        // rename-match's acceptance on its volume delta) was removed: once a fallback pairing
+        // clears the geometric-similarity bar, we have no more reliable way to independently
+        // second-guess it via size alone than we do for any other pair — that's the same reason
+        // bounding box was dropped from classification entirely (see this class's own doc
+        // comment). A confirmed rename with a big volume delta is just a big revision.
         AssemblyDiffType diffType;
-        bool suspiciousNameCollision = false, suspiciousSizeMismatch = false;
+        bool suspiciousNameCollision = false;
 
-        if (withinTolerance)
+        if (volumeUnchanged)
         {
             diffType = AssemblyDiffType.Unchanged;
         }
@@ -146,58 +158,32 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
                 diffType = AssemblyDiffType.SuspiciousMatch;
                 suspiciousNameCollision = true;
             }
-            else if (geometricSimilarity.HasValue && Math.Abs(volDeltaPct) > tol.FallbackSuspiciousVolumeDeltaPercent)
-            {
-                // A confident-looking blended similarity score (bounding box + volume + surface
-                // area + topology + feature histogram together) can still coexist with a large
-                // volume delta on its own — reporting that pairing as "possible rename" would be
-                // self-contradictory (a renamed-but-unmodified part should look nearly identical).
-                // Flag it as suspicious instead of asserting an identity we can't actually back up.
-                diffType = AssemblyDiffType.SuspiciousMatch;
-                suspiciousSizeMismatch = true;
-            }
             else
             {
                 diffType = AssemblyDiffType.Modified;
             }
         }
 
-        // Orientation/position are about the assembly PLACEMENT, entirely separate from shape
-        // identity — reported whenever both sides have exactly one, unambiguous instance to
-        // compare (see AssemblyComponent's Placement doc), regardless of how the pair was
-        // classified. Even a SuspiciousMatch or Modified pairing is worth telling the user
-        // "and it also moved/rotated" — orientation is a placement fact, not a claim about shape
-        // identity, so it's never gated on how confident the shape classification is.
-        bool? orientationChanged = null, positionChanged = null;
-        if (compA.Placement is { } placementA && compB.Placement is { } placementB)
-        {
-            orientationChanged = PlacementMath.OrientationAngleDegrees(placementA, placementB)
-                > tol.OrientationChangeDegreesThreshold;
-            positionChanged = PlacementMath.PositionDistance(placementA, placementB)
-                > tol.PositionChangeMetersThreshold;
-        }
-
         var reasons = BuildReasons(
             quantityChanged, compA.InstanceCount, compB.InstanceCount,
-            suspiciousNameCollision, suspiciousSizeMismatch,
-            geometricSimilarity.HasValue && !suspiciousNameCollision && !suspiciousSizeMismatch,
-            diffType, volDeltaPct, faceDelta, orientationChanged, positionChanged);
+            suspiciousNameCollision,
+            geometricSimilarity.HasValue && !suspiciousNameCollision,
+            diffType, volDeltaPct);
 
         return new AssemblyComponentDiff(
             key, compA, compB, diffType, quantityChanged,
             compA.InstanceCount, compB.InstanceCount,
-            bbDelta, bbVolDeltaPct, volDeltaPct, saDeltaPct, faceDelta,
-            geometricSimilarity, reasons, orientationChanged, positionChanged);
+            volDeltaPct, saDeltaPct, faceDelta,
+            geometricSimilarity, reasons);
     }
 
     // Builds short, plain-English bullet points — no raw internal measurements, no jargon.
-    // Numeric detail (exact bounding-box axes, similarity scores, etc.) still lives on the
+    // Numeric detail (volume/surface-area deltas, similarity scores, etc.) still lives on the
     // AssemblyComponentDiff record itself for anyone who wants it (e.g. the Excel export).
     private static List<string> BuildReasons(
         bool quantityChanged, int? instanceCountA, int? instanceCountB,
-        bool suspiciousNameCollision, bool suspiciousSizeMismatch, bool matchedByGeometry,
-        AssemblyDiffType diffType, double volDeltaPct, int faceDelta,
-        bool? orientationChanged, bool? positionChanged)
+        bool suspiciousNameCollision, bool matchedByGeometry,
+        AssemblyDiffType diffType, double volDeltaPct)
     {
         var reasons = new List<string>();
 
@@ -209,62 +195,24 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
             reasons.Add("Same name, but geometry is very different.");
             reasons.Add("Likely two different parts.");
         }
-        else if (suspiciousSizeMismatch)
-        {
-            reasons.Add("Matched by shape, but sizes are very different.");
-            reasons.Add("Likely two different parts.");
-        }
         else
         {
             if (matchedByGeometry)
                 reasons.Add("Same shape, different name (likely renamed).");
 
+            // Modified is now reachable ONLY via a nonzero volume delta, so this always has
+            // something real to say — no more "different overall size" fallback for a change
+            // that couldn't otherwise be explained.
             if (diffType == AssemblyDiffType.Modified)
-            {
-                if (Math.Abs(volDeltaPct) > 0.5)
-                    reasons.Add(volDeltaPct > 0
-                        ? $"Volume increased by {Math.Abs(volDeltaPct):F0}%."
-                        : $"Volume decreased by {Math.Abs(volDeltaPct):F0}%.");
-                else if (faceDelta != 0)
-                    reasons.Add("Geometry changed.");
-                else
-                    reasons.Add("Different overall size.");
-            }
+                reasons.Add(volDeltaPct > 0
+                    ? $"Volume increased by {Math.Abs(volDeltaPct):0.####}%."
+                    : $"Volume decreased by {Math.Abs(volDeltaPct):0.####}%.");
         }
-
-        // Orientation/position are reported uniformly regardless of shape classification — a
-        // suspicious or modified pairing can still have moved/rotated in the assembly, and that's
-        // useful, independent signal the user should see either way (never gated behind an early
-        // return, and worded to not presuppose "same part" for non-Unchanged classifications).
-        if (orientationChanged == true)
-            reasons.Add("Orientation changed in the assembly.");
-        if (positionChanged == true)
-            reasons.Add("Position changed in the assembly.");
 
         if (reasons.Count == 0)
             reasons.Add("No differences found.");
 
         return reasons;
-    }
-
-    private static bool IsWithinTolerance(
-        double[] bbA, double[] bbDeltaPercent, double volDeltaPct, AssemblyDiffTolerances tol)
-    {
-        for (int i = 0; i < bbDeltaPercent.Length; i++)
-        {
-            double absDeltaM = Math.Abs(bbDeltaPercent[i] / 100.0 * bbA[i]);
-            if (absDeltaM <= tol.BoundingBoxAbsoluteFloorM) continue;
-            if (Math.Abs(bbDeltaPercent[i]) > tol.BoundingBoxDeltaPercentThreshold) return false;
-        }
-        return Math.Abs(volDeltaPct) <= tol.VolumeDeltaPercentThreshold;
-    }
-
-    private static double[] BoundingBoxDeltaPercent(double[] a, double[] b)
-    {
-        var delta = new double[Math.Min(a.Length, b.Length)];
-        for (int i = 0; i < delta.Length; i++)
-            delta[i] = RelativeDeltaPercent(a[i], b[i]);
-        return delta;
     }
 
     private static double RelativeDeltaPercent(double a, double b)

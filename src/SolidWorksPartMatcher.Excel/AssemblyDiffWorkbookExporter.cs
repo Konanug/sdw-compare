@@ -93,10 +93,8 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         var ws = wb.Worksheets.Add("Modified Parts");
         var headers = new[]
         {
-            "Part Name", "Length Δ (mm, %)", "Width Δ (mm, %)", "Height Δ (mm, %)",
-            "BB Volume Δ (%)", "Est. Volume Δ (cm³, %)", "Surface Area Δ (cm², %)", "Face Count Δ",
-            "Qty A", "Qty B", "Qty Changed?", "Orientation Changed?", "Position Changed?",
-            "Match Basis", "Notes"
+            "Part Name", "Volume Δ (cm³, %)", "Surface Area Δ (cm², %)", "Face Count Δ",
+            "Qty A", "Qty B", "Qty Changed?", "Match Basis", "Notes"
         };
         WriteHeaders(ws, headers);
 
@@ -108,38 +106,24 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
             var a = d.ComponentA; var b = d.ComponentB;
             ws.Cell(row, 1).Value = d.MatchKey;
 
-            for (int axis = 0; axis < 3 && d.BoundingBoxDeltaPercent is not null; axis++)
-            {
-                double deltaMm = a is not null && b is not null
-                    ? (b.SortedBoundingBoxM[axis] - a.SortedBoundingBoxM[axis]) * 1000.0
-                    : 0;
-                ws.Cell(row, 2 + axis).Value =
-                    $"{Math.Round(deltaMm, 2)} ({Math.Round(d.BoundingBoxDeltaPercent[axis], 2)}%)";
-            }
-
             // 2 decimal places, not 1 — a genuine -99.98% delta rounding to a clean-looking
             // "-100.0%" misleadingly reads as "vanished entirely" rather than "very different".
-            // BB Volume Δ is exact (straight from the measured L×W×H product); Est. Volume Δ is
-            // StepGeometryEstimator's heuristic body-volume estimate — both worth showing since
-            // they're derived differently and can disagree.
-            if (d.BoundingBoxVolumeDeltaPercent is { } bbVolPct)
-                ws.Cell(row, 5).Value = $"{Math.Round(bbVolPct, 2)}%";
+            // This is the real (OCCT) volume — the sole classification signal; bounding box is
+            // no longer computed or shown at all, since it produced skewed/false results.
             if (d.VolumeDeltaPercent is { } volPct && a is not null && b is not null)
-                ws.Cell(row, 6).Value =
+                ws.Cell(row, 2).Value =
                     $"{Math.Round((b.VolumeM3 - a.VolumeM3) * 1e6, 2)} ({Math.Round(volPct, 2)}%)";
             if (d.SurfaceAreaDeltaPercent is { } saPct && a is not null && b is not null)
-                ws.Cell(row, 7).Value =
+                ws.Cell(row, 3).Value =
                     $"{Math.Round((b.SurfaceAreaM2 - a.SurfaceAreaM2) * 1e4, 2)} ({Math.Round(saPct, 2)}%)";
             if (d.FaceCountDelta is { } faceDelta)
-                ws.Cell(row, 8).Value = faceDelta;
+                ws.Cell(row, 4).Value = faceDelta;
 
-            ws.Cell(row, 9).Value  = d.InstanceCountA?.ToString() ?? "?";
-            ws.Cell(row, 10).Value = d.InstanceCountB?.ToString() ?? "?";
-            ws.Cell(row, 11).Value = d.QuantityChanged ? "Yes" : "No";
-            ws.Cell(row, 12).Value = d.OrientationChanged switch { true => "Yes", false => "No", null => "N/A" };
-            ws.Cell(row, 13).Value = d.PositionChanged switch { true => "Yes", false => "No", null => "N/A" };
-            ws.Cell(row, 14).Value = d.GeometricSimilarityScore.HasValue ? "Geometry (rename)" : "Name";
-            ws.Cell(row, 15).Value = string.Join("; ", d.Reasons);
+            ws.Cell(row, 5).Value = d.InstanceCountA?.ToString() ?? "?";
+            ws.Cell(row, 6).Value = d.InstanceCountB?.ToString() ?? "?";
+            ws.Cell(row, 7).Value = d.QuantityChanged ? "Yes" : "No";
+            ws.Cell(row, 8).Value = d.GeometricSimilarityScore.HasValue ? "Geometry (rename)" : "Name";
+            ws.Cell(row, 9).Value = string.Join("; ", d.Reasons);
 
             row++;
         }

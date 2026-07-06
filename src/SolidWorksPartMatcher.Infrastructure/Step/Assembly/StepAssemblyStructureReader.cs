@@ -53,23 +53,6 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
         @"^NEXT_ASSEMBLY_USAGE_OCCURRENCE\(\s*(?:'[^']*'|\$)\s*,\s*(?:'[^']*'|\$)\s*,\s*(?:'[^']*'|\$)\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,\s*(?:'[^']*'|\$)\s*\)",
         RegexOptions.Compiled);
 
-    // CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#transformBearingCompound, #nauoWrappingPds) — note
-    // the field order is REVERSED relative to SHAPE_DEFINITION_REPRESENTATION(#pds, #shapeRep).
-    private static readonly Regex CdsrRx =
-        new(@"^CONTEXT_DEPENDENT_SHAPE_REPRESENTATION\(\s*(#\d+)\s*,\s*(#\d+)\s*\)", RegexOptions.Compiled);
-
-    // Pulled out of a compound entity's raw text (which also contains REPRESENTATION_RELATIONSHIP
-    // and SHAPE_REPRESENTATION_RELATIONSHIP on the same P21 instance) — just the one sub-clause
-    // that carries the actual transform reference.
-    private static readonly Regex RepWithTransformRx =
-        new(@"REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION\s*\(\s*(#\d+)\s*\)", RegexOptions.Compiled);
-
-    // ITEM_DEFINED_TRANSFORMATION(name, description, #sourceFrame, #targetFrame) — both frames
-    // are AXIS2_PLACEMENT_3D entities; name/description are usually '$' but may be quoted.
-    private static readonly Regex ItemDefinedTransformationRx = new(
-        @"^ITEM_DEFINED_TRANSFORMATION\(\s*(?:'[^']*'|\$)\s*,\s*(?:'[^']*'|\$)\s*,\s*(#\d+)\s*,\s*(#\d+)\s*\)",
-        RegexOptions.Compiled);
-
     private const int MaxNauoWalkSteps = 200_000;
     private const int MaxNauoDepth     = 64;
 
@@ -183,92 +166,33 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
             return new AssemblyStructure(components, warnings);
         }
 
+        // ── Real-volume refinement (OCCT) ───────────────────────────────────────────────────
+        // Replaces the crude 55%-of-bounding-box heuristic (StepGeometryEstimator.EstimateVolume)
+        // with a real CAD-kernel volume per component, computed via a minimal batch subprocess.
+        // Deliberately does not touch structure/instance-count/matching/placement below — see
+        // OcctVolumeRefiner's own doc comment for why. Any failure leaves the heuristic volume
+        // in place for the affected component(s), with a warning; never throws.
+        var realVolumes = SolidWorksPartMatcher.Infrastructure.Assembly.OcctVolumeRefiner.Refine(
+            reader, components, warnings);
+        if (realVolumes.Count > 0)
+            for (int i = 0; i < components.Count; i++)
+                if (realVolumes.TryGetValue(components[i].ProductId, out var realVolume))
+                    components[i] = components[i] with { VolumeM3 = realVolume };
+
         // ── PRODUCT_DEFINITION → owning ProductId (forward walk: PD → FORMATION → PRODUCT) ──
         var productIdByPd = BuildProductIdByPd(warnings);
 
         // ── NAUO parent→child graph + instance counting ────────────────────────────────────
-        var (instanceCounts, soleNauoByProduct) =
-            ComputeInstanceCounts(productIdByPd, componentByProduct, warnings);
-
-        // ── Placement (only for products with exactly one instance — see AssemblyComponent's
-        //    Placement doc for why multi-instance products are deliberately left unresolved) ──
-        var placementByNauo = ResolvePlacements(soleNauoByProduct.Values, warnings);
+        var instanceCounts = ComputeInstanceCounts(productIdByPd, componentByProduct, warnings);
 
         var result = new List<AssemblyComponent>(components.Count);
         foreach (var c in components)
         {
             instanceCounts.TryGetValue(c.ProductId, out int count);
-            AssemblyComponentPlacement? placement = null;
-            if (count == 1 && soleNauoByProduct.TryGetValue(c.ProductId, out int nauoId))
-                placementByNauo.TryGetValue(nauoId, out placement);
-            result.Add(c with { InstanceCount = count > 0 ? count : null, Placement = placement });
+            result.Add(c with { InstanceCount = count > 0 ? count : null });
         }
 
         return new AssemblyStructure(result, warnings);
-    }
-
-    // Resolves each given NAUO id's placement transform: NAUO → (PRODUCT_DEFINITION_SHAPE
-    // wrapping the NAUO) → CONTEXT_DEPENDENT_SHAPE_REPRESENTATION → transform-bearing compound
-    // entity → ITEM_DEFINED_TRANSFORMATION → two AXIS2_PLACEMENT_3D frames. Verified against the
-    // real Test6 files (see plan doc) — the source frame is consistently the trivial identity
-    // placement and the target frame carries the actual position/orientation within the parent,
-    // but the relative composition in PlacementMath handles the general case regardless.
-    private Dictionary<int, AssemblyComponentPlacement> ResolvePlacements(
-        IEnumerable<int> nauoIds, List<string> warnings)
-    {
-        var wanted = new HashSet<int>(nauoIds);
-        var result = new Dictionary<int, AssemblyComponentPlacement>();
-        if (wanted.Count == 0) return result;
-
-        // NAUO id → wrapping PRODUCT_DEFINITION_SHAPE id (same entity type/shape as the part's
-        // own PDS, but its 3rd field references a NAUO instead of a PRODUCT_DEFINITION).
-        var pdsByNauo = new Dictionary<int, int>();
-        foreach (var id in reader.AllEntityIds())
-        {
-            if (reader.GetEntityType(id) != "PRODUCT_DEFINITION_SHAPE") continue;
-            if (!reader.TryGetRaw(id, out var raw)) continue;
-            var m = ProductDefinitionShapeRx.Match(raw);
-            if (!m.Success || !TryParseRef(m.Groups[1].Value, out int refId)) continue;
-            if (reader.GetEntityType(refId) == "NEXT_ASSEMBLY_USAGE_OCCURRENCE" && wanted.Contains(refId))
-                pdsByNauo[refId] = id;
-        }
-
-        // Wrapping-PDS id → (transform-bearing compound id), via CDSR's reversed field order.
-        var compoundByPds = new Dictionary<int, int>();
-        foreach (var id in reader.AllEntityIds())
-        {
-            if (reader.GetEntityType(id) != "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION") continue;
-            if (!reader.TryGetRaw(id, out var raw)) continue;
-            var m = CdsrRx.Match(raw);
-            if (!m.Success) continue;
-            if (!TryParseRef(m.Groups[1].Value, out int compoundId)) continue;
-            if (!TryParseRef(m.Groups[2].Value, out int pdsId)) continue;
-            compoundByPds[pdsId] = compoundId;
-        }
-
-        foreach (var nauoId in wanted)
-        {
-            if (!pdsByNauo.TryGetValue(nauoId, out int pdsId)) continue;
-            if (!compoundByPds.TryGetValue(pdsId, out int compoundId)) continue;
-            if (!reader.TryGetRaw(compoundId, out var compoundRaw)) continue;
-
-            var twm = RepWithTransformRx.Match(compoundRaw);
-            if (!twm.Success || !TryParseRef(twm.Groups[1].Value, out int transformId)) continue;
-            if (!reader.TryGetRaw(transformId, out var transformRaw)) continue;
-
-            var tm = ItemDefinedTransformationRx.Match(transformRaw);
-            if (!tm.Success) continue;
-            if (!TryParseRef(tm.Groups[1].Value, out int frame1Id)) continue;
-            if (!TryParseRef(tm.Groups[2].Value, out int frame2Id)) continue;
-
-            if (!reader.TryGetAxisPlacement(frame1Id, out var origin1, out var axis1, out var refDir1)) continue;
-            if (!reader.TryGetAxisPlacement(frame2Id, out var origin2, out var axis2, out var refDir2)) continue;
-
-            result[nauoId] = PlacementMath.ComputeRelativePlacement(
-                origin1, axis1, refDir1, origin2, axis2, refDir2);
-        }
-
-        return result;
     }
 
     // ── Reverse-index builders ──────────────────────────────────────────────────────────────
@@ -361,11 +285,8 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
 
     // Builds the NAUO parent→child PD graph, finds root PD(s), and counts root-to-leaf paths
     // per leaf ProductId (a sub-assembly used N times multiplies everything nested inside it,
-    // since that's how many distinct root→...→leaf paths exist through the graph). Also tracks
-    // which NAUO id(s) contributed to each product's count, so that products reached via
-    // exactly one NAUO edge (i.e. InstanceCount == 1) can have their placement resolved
-    // unambiguously — see ResolvePlacements.
-    private (Dictionary<string, int> Counts, Dictionary<string, int> SoleNauoByProduct) ComputeInstanceCounts(
+    // since that's how many distinct root→...→leaf paths exist through the graph).
+    private Dictionary<string, int> ComputeInstanceCounts(
         Dictionary<int, string> productIdByPd,
         Dictionary<string, AssemblyComponent> componentByProduct,
         List<string> warnings)
@@ -391,34 +312,26 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
         }
 
         var counts = new Dictionary<string, int>(StringComparer.Ordinal);
-        var nauoIdsByProduct = new Dictionary<string, List<int>>(StringComparer.Ordinal);
 
-        void RecordVisit(string productId, int nauoId)
+        void RecordVisit(string productId)
         {
             counts.TryGetValue(productId, out int existing);
             counts[productId] = existing + 1;
-            if (!nauoIdsByProduct.TryGetValue(productId, out var list))
-                nauoIdsByProduct[productId] = list = [];
-            list.Add(nauoId);
         }
-
-        Dictionary<string, int> SoleNauoByProduct() => nauoIdsByProduct
-            .Where(kv => kv.Value.Count == 1)
-            .ToDictionary(kv => kv.Key, kv => kv.Value[0], StringComparer.Ordinal);
 
         if (childrenByParent.Count == 0)
         {
             // No assembly-structure edges at all — every leaf component is its own
-            // implicit standalone occurrence, and no placement data exists to resolve.
+            // implicit standalone occurrence.
             foreach (var productId in componentByProduct.Keys) counts[productId] = 1;
-            return (counts, new Dictionary<string, int>(StringComparer.Ordinal));
+            return counts;
         }
 
         var roots = relatingIds.Except(relatedIds).ToList();
         int steps = 0;
         bool truncated = false;
 
-        void Visit(int pdId, int? incomingNauoId, HashSet<int> pathVisited)
+        void Visit(int pdId, bool hasIncoming, HashSet<int> pathVisited)
         {
             if (truncated) return;
             if (++steps > MaxNauoWalkSteps || pathVisited.Count > MaxNauoDepth)
@@ -433,30 +346,29 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
                 return;
             }
 
-            if (incomingNauoId is { } nauoId &&
+            if (hasIncoming &&
                 productIdByPd.TryGetValue(pdId, out var productId) && componentByProduct.ContainsKey(productId))
             {
-                RecordVisit(productId, nauoId);
+                RecordVisit(productId);
             }
 
             if (childrenByParent.TryGetValue(pdId, out var children))
-                foreach (var (childPd, childNauoId) in children)
-                    Visit(childPd, childNauoId, pathVisited);
+                foreach (var (childPd, _) in children)
+                    Visit(childPd, true, pathVisited);
 
             pathVisited.Remove(pdId);
         }
 
         foreach (var root in roots)
-            Visit(root, null, []);
+            Visit(root, false, []);
 
         // Leaf components never reached from any root (loose parts with no NAUO edges at all)
-        // still get an implicit count of 1 rather than being silently excluded — no NAUO id to
-        // record for these, so no placement can be resolved for them either.
+        // still get an implicit count of 1 rather than being silently excluded.
         foreach (var productId in componentByProduct.Keys)
             if (!counts.ContainsKey(productId))
                 counts[productId] = 1;
 
-        return (counts, SoleNauoByProduct());
+        return counts;
     }
 
     private static bool TryParseRef(string token, out int id)

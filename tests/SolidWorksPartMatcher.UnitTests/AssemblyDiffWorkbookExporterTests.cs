@@ -28,11 +28,11 @@ public sealed class AssemblyDiffWorkbookExporterTests : IDisposable
         var diffs = new List<AssemblyComponentDiff>
         {
             new("MODIFIED-PART", a1, b1, AssemblyDiffType.Modified, true, 2, 3,
-                [50.0, 50.0, 33.3], 150.0, 200.0, 100.0, 0, null, ["Quantity changed from 2 to 3.", "Volume increased by 200%."]),
+                200.0, 100.0, 0, null, ["Quantity changed from 2 to 3.", "Volume increased by 200%."]),
             new("ADDED-PART", null, addedComp, AssemblyDiffType.Added, false, 0, 1,
-                null, null, null, null, null, null, ["Part added."]),
+                null, null, null, null, ["Part added."]),
             new("REMOVED-PART", removedComp, null, AssemblyDiffType.Removed, false, 1, 0,
-                null, null, null, null, null, null, ["Part removed."]),
+                null, null, null, null, ["Part removed."]),
         };
 
         var summary = new AssemblyDiffSummary("A.step", "B.step", DateTime.UtcNow, diffs, []);

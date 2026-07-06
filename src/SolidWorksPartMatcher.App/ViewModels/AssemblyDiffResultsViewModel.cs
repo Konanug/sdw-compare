@@ -24,18 +24,10 @@ public sealed class AssemblyComponentDiffRowViewModel
     // as its own category rather than burying it in a column badge alone.
     public bool IsQuantityOnlyChange => Diff.DiffType == AssemblyDiffType.Unchanged && Diff.QuantityChanged;
 
-    // Same part, same quantity, but its position/orientation in the assembly differs — a third
-    // distinct "nothing about the part itself changed, but where/how it sits did" category.
-    // Never true at the same time as IsQuantityOnlyChange: orientation/position are only ever
-    // determined when both sides have exactly one instance, which means the counts are equal.
-    public bool IsPlacementOnlyChange => Diff.DiffType == AssemblyDiffType.Unchanged
-        && (Diff.OrientationChanged == true || Diff.PositionChanged == true);
-
     public string MatchKey => Diff.MatchKey;
     public string StatusLabel => Diff.DiffType switch
     {
         AssemblyDiffType.Unchanged when IsQuantityOnlyChange => "Quantity Changed",
-        AssemblyDiffType.Unchanged when IsPlacementOnlyChange => "Placement Changed",
         AssemblyDiffType.Unchanged => "Unchanged",
         AssemblyDiffType.Modified => "Modified",
         AssemblyDiffType.Added => "Added",
@@ -47,7 +39,6 @@ public sealed class AssemblyComponentDiffRowViewModel
     public string StatusBrush => Diff.DiffType switch
     {
         AssemblyDiffType.Unchanged when IsQuantityOnlyChange => "#EDE7F6",
-        AssemblyDiffType.Unchanged when IsPlacementOnlyChange => "#E0F7FA",
         AssemblyDiffType.Unchanged => "#E8F5E9",
         AssemblyDiffType.Modified => "#FFF8E1",
         AssemblyDiffType.Added => "#E3F2FD",
@@ -62,20 +53,12 @@ public sealed class AssemblyComponentDiffRowViewModel
         ? $"{Diff.InstanceCountA?.ToString() ?? "?"} → {Diff.InstanceCountB?.ToString() ?? "?"}"
         : "—";
 
-    // Always shown for any matched pair — even 0.00%, per explicit request — since it's genuinely
-    // useful reference data, not just noise. Only "—" for Added/Removed, where there's no second
-    // side to compare against. 2 decimal places (not 1) so a real ~-99.98% doesn't misleadingly
-    // round to a "-100.0%" that reads as "vanished entirely".
-    public string BoundingBoxDeltaLabel => Diff.BoundingBoxDeltaPercent is { Length: 3 } d
-        ? $"{d[0]:+0.00;-0.00;0}% / {d[1]:+0.00;-0.00;0}% / {d[2]:+0.00;-0.00;0}%"
-        : "—";
-
-    // Exact/deterministic — straight from the measured L×W×H box product, no estimation.
-    public string BoundingBoxVolumeDeltaLabel => Diff.BoundingBoxVolumeDeltaPercent is { } v
-        ? $"{v:+0.00;-0.00;0}%" : "—";
-
-    // The existing heuristic body-volume estimate (StepGeometryEstimator) — a closer guess at
-    // true solid volume than the bounding-box product, but an estimate rather than exact.
+    // The real (OCCT) volume delta — the sole classification signal. Bounding box is no longer
+    // computed or shown at all: it produced skewed/false results (a small local feature could
+    // swing one bbox axis disproportionately while true volume barely moved, and vice versa).
+    // Always shown for any matched pair — even 0.00%, since it's genuinely useful reference
+    // data. Only "—" for Added/Removed, where there's no second side to compare against. 2
+    // decimal places (not 1) so a real ~-99.98% doesn't misleadingly round to "-100.0%".
     public string VolumeDeltaLabel => Diff.VolumeDeltaPercent is { } v ? $"{v:+0.00;-0.00;0}%" : "—";
 
     // One bullet per line — easier to scan than a single semicolon-joined sentence. Each bullet
@@ -109,9 +92,14 @@ public sealed partial class AssemblyDiffResultsViewModel : ObservableObject
     // AND quantity-changed are still counted under ModifiedCount, not here — the quantity delta
     // for those rows is still visible per-row via QuantityLabel.
     public int QuantityChangeCount { get; }
-    // Same part, same quantity, only its assembly position/orientation differs — see
-    // AssemblyComponentDiffRowViewModel.IsPlacementOnlyChange.
-    public int PlacementChangeCount { get; }
+
+    // Old/new file being compared — shown in the results window so it's always clear which two
+    // files produced this comparison, without having to check the title bar or re-open the
+    // compare dialog. Full path is available via tooltip binding to *FilePath.
+    public string OldFileLabel => System.IO.Path.GetFileName(_pathA);
+    public string NewFileLabel => System.IO.Path.GetFileName(_pathB);
+    public string OldFilePath => _pathA;
+    public string NewFilePath => _pathB;
 
     [ObservableProperty] private string _statusMessage = "";
 
@@ -131,17 +119,13 @@ public sealed partial class AssemblyDiffResultsViewModel : ObservableObject
         Rows = new ObservableCollection<AssemblyComponentDiffRowViewModel>(
             summary.Components.Select(c => new AssemblyComponentDiffRowViewModel(c)));
 
-        bool IsPlacementOnly(AssemblyComponentDiff c) => c.DiffType == AssemblyDiffType.Unchanged
-            && (c.OrientationChanged == true || c.PositionChanged == true);
-
-        UnchangedCount       = summary.Components.Count(c =>
-            c.DiffType == AssemblyDiffType.Unchanged && !c.QuantityChanged && !IsPlacementOnly(c));
-        ModifiedCount        = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Modified);
-        AddedCount           = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
-        RemovedCount         = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
-        SuspiciousCount      = summary.Components.Count(c => c.DiffType == AssemblyDiffType.SuspiciousMatch);
-        QuantityChangeCount  = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Unchanged && c.QuantityChanged);
-        PlacementChangeCount = summary.Components.Count(IsPlacementOnly);
+        UnchangedCount      = summary.Components.Count(c =>
+            c.DiffType == AssemblyDiffType.Unchanged && !c.QuantityChanged);
+        ModifiedCount       = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Modified);
+        AddedCount          = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
+        RemovedCount        = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
+        SuspiciousCount     = summary.Components.Count(c => c.DiffType == AssemblyDiffType.SuspiciousMatch);
+        QuantityChangeCount = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Unchanged && c.QuantityChanged);
 
         if (summary.Warnings.Count > 0)
             StatusMessage = $"{summary.Warnings.Count} warning(s) — see Export Report for details.";
