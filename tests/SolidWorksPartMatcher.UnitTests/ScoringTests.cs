@@ -202,4 +202,68 @@ public sealed class ScoringTests
         MeasurementParser.FormatDisplay(v1).Should().Be("0.55");
         MeasurementParser.FormatDisplay(v2).Should().Be("0.55");
     }
+
+    // ── MeasurementParser.TryParseToMm ──────────────────────────────────────
+
+    [Theory]
+    [InlineData("0.5in",    MeasurementParser.LengthUnit.Inch,        0.5  * 25.4)]
+    [InlineData("3/8in",    MeasurementParser.LengthUnit.Inch,        0.375 * 25.4)]
+    [InlineData("1.500in",  MeasurementParser.LengthUnit.Inch,        1.5  * 25.4)]
+    [InlineData("0.5 in",   MeasurementParser.LengthUnit.Inch,        0.5  * 25.4)]   // space before suffix
+    [InlineData("0.5IN",    MeasurementParser.LengthUnit.Inch,        0.5  * 25.4)]   // uppercase
+    [InlineData("12.7mm",   MeasurementParser.LengthUnit.Millimetre,  12.7)]
+    [InlineData("0.5",      MeasurementParser.LengthUnit.Unknown,      0.5)]           // no suffix → raw value
+    public void TryParseToMm_ParsesCorrectly(string input, MeasurementParser.LengthUnit expectedUnit, double expectedMm)
+    {
+        var ok = MeasurementParser.TryParseToMm(input, out var mm, out var unit);
+        ok.Should().BeTrue();
+        unit.Should().Be(expectedUnit);
+        mm.Should().BeApproximately(expectedMm, 1e-9);
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("abc")]
+    public void TryParseToMm_ReturnsFalse_ForUnparseable(string? input)
+    {
+        MeasurementParser.TryParseToMm(input, out _, out _).Should().BeFalse();
+    }
+
+    // ── AreEquivalentPropertyValues — inch unit suffix ───────────────────────
+
+    [Theory]
+    // Same inch values
+    [InlineData("0.5in",   "0.5in",   true)]
+    [InlineData("0.50in",  "0.5in",   true)]   // trailing zero
+    // Fraction/decimal equivalence in inches (|diff_mm| ≤ 0.5)
+    [InlineData("3/8in",   "0.38in",  true)]   // |9.525 - 9.652| = 0.127 mm
+    // 0.5 mm boundary in inches
+    [InlineData("1.500in", "1.519in", true)]   // |38.100 - 38.583| ≈ 0.483 mm ≤ 0.5
+    [InlineData("1.500in", "1.520in", false)]  // |38.100 - 38.608| ≈ 0.508 mm > 0.5
+    // Cross-unit: same physical dimension
+    [InlineData("0.5in",   "12.7mm",  true)]   // 0.5 × 25.4 = 12.7 mm
+    [InlineData("1.0in",   "25.4mm",  true)]
+    // Different inch values outside tolerance
+    [InlineData("1.0in",   "2.0in",   false)]
+    // Mixed: one side has "in" suffix, other is a bare decimal — the unit is inherited
+    [InlineData("3/8in",   "0.375",   true)]   // exact: 9.525 mm == 9.525 mm
+    [InlineData("3/8in",   "0.38",    true)]   // |9.525 - 9.652| = 0.127 mm ≤ 0.5
+    [InlineData("0.5in",   "0.5",     true)]   // 12.7 mm == 12.7 mm
+    [InlineData("1.500in", "1.519",   true)]   // |38.100 - 38.583| ≈ 0.483 mm ≤ 0.5
+    [InlineData("1.500in", "1.520",   false)]  // |38.100 - 38.608| ≈ 0.508 mm > 0.5
+    public void AreEquivalentPropertyValues_InchSuffix_Correct(string a, string b, bool expected)
+    {
+        WeightedCandidateScorer.AreEquivalentPropertyValues(a, b)
+            .Should().Be(expected);
+    }
+
+    [Fact]
+    public void AreEquivalentPropertyValues_UnitlessSideInheritsExplicitUnit()
+    {
+        // When one side has an explicit unit the bare-number side inherits it.
+        // "0.5" alongside "0.5in" is treated as 0.5 inches = 12.7 mm → equal.
+        WeightedCandidateScorer.AreEquivalentPropertyValues("0.5", "0.5in")
+            .Should().BeTrue();
+    }
 }

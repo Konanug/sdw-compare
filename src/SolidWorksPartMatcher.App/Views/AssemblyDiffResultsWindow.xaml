@@ -1,0 +1,120 @@
+<Window x:Class="SolidWorksPartMatcher.App.Views.AssemblyDiffResultsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Assembly Comparison Results" Height="700" Width="1480"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="Segoe UI" FontSize="13">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- ── Comparison bar: which two files this result is for ──────────── -->
+        <Border Grid.Row="0" Background="#37474F" Padding="14,8">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="Old file:" Foreground="#B0BEC5" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding OldFileLabel}" ToolTip="{Binding OldFilePath}"
+                           Foreground="White" FontWeight="SemiBold" Margin="0,0,24,0"/>
+                <TextBlock Text="New file:" Foreground="#B0BEC5" Margin="0,0,6,0"/>
+                <TextBlock Text="{Binding NewFileLabel}" ToolTip="{Binding NewFilePath}"
+                           Foreground="White" FontWeight="SemiBold"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Summary bar ────────────────────────────────────────────────── -->
+        <Border Grid.Row="1" Background="#263238" Padding="14,10">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="{Binding UnchangedCount, StringFormat='Unchanged: {0}'}"
+                           Foreground="#A5D6A7" Margin="0,0,20,0"/>
+                <TextBlock Text="{Binding ModifiedCount, StringFormat='Modified: {0}'}"
+                           Foreground="#FFE082" Margin="0,0,20,0"/>
+                <TextBlock Text="{Binding AddedCount, StringFormat='Added: {0}'}"
+                           Foreground="#90CAF9" Margin="0,0,20,0"/>
+                <TextBlock Text="{Binding RemovedCount, StringFormat='Removed: {0}'}"
+                           Foreground="#EF9A9A" Margin="0,0,20,0"/>
+                <TextBlock Text="{Binding SuspiciousCount, StringFormat='Suspicious: {0}'}"
+                           Foreground="#FFCC80" Margin="0,0,20,0"/>
+                <TextBlock Text="{Binding QuantityChangeCount, StringFormat='Quantity Change: {0}'}"
+                           Foreground="#CE93D8"/>
+            </StackPanel>
+        </Border>
+
+        <!-- ── Results grid ───────────────────────────────────────────────── -->
+        <DataGrid Grid.Row="2" ItemsSource="{Binding Rows}"
+                  AutoGenerateColumns="False" IsReadOnly="True"
+                  CanUserAddRows="False" CanUserDeleteRows="False"
+                  GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#D0D0D0"
+                  HeadersVisibility="Column"
+                  AutomationProperties.Name="Assembly component diffs">
+            <!-- Row color is driven purely by status (StatusBrush) — no AlternatingRowBackground,
+                 since DataGrid applies it as a value that takes precedence over a RowStyle
+                 Background setter on alternate rows, fighting with the status color. Rows are
+                 separated by the horizontal gridlines above instead of a background checker.
+                 No fixed RowHeight — rows auto-size so multi-line reason bullets aren't clipped. -->
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="Background" Value="{Binding StatusBrush}"/>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Resources>
+                <!-- Shared cell text style: top-aligned (so short single-line cells line up with
+                     the first bullet of taller multi-line rows) with generous side margins so
+                     columns don't feel crowded against each other. -->
+                <Style x:Key="CellText" TargetType="TextBlock">
+                    <Setter Property="VerticalAlignment" Value="Top"/>
+                    <Setter Property="Margin" Value="10,6,10,6"/>
+                </Style>
+            </DataGrid.Resources>
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Part" Binding="{Binding MatchKey}" Width="200"
+                                     ElementStyle="{StaticResource CellText}"/>
+                <DataGridTextColumn Header="Status" Binding="{Binding StatusLabel}" Width="150"
+                                     ElementStyle="{StaticResource CellText}"/>
+                <DataGridTextColumn Header="Qty A → B" Binding="{Binding QuantityLabel}" Width="110"
+                                     ElementStyle="{StaticResource CellText}"/>
+                <DataGridTextColumn Header="Volume Δ" Binding="{Binding VolumeDeltaLabel}" Width="110"
+                                     ElementStyle="{StaticResource CellText}"/>
+                <DataGridTextColumn Header="What changed" Binding="{Binding ReasonText}" Width="*">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+                            <Setter Property="TextWrapping" Value="Wrap"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTemplateColumn Header="" Width="100">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <!-- Fixed size regardless of row height: Top-aligned instead of the
+                                 default Stretch, so it never grows to fill a taller multi-bullet row. -->
+                            <Button Content="3D View" Padding="8,4" Margin="6"
+                                    VerticalAlignment="Top" HorizontalAlignment="Left"
+                                    Visibility="{Binding CanViewDiff, Converter={StaticResource BoolVis}}"
+                                    Command="{Binding DataContext.ViewComponentDiffCommand,
+                                              RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                    CommandParameter="{Binding}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- ── Button bar ─────────────────────────────────────────────────── -->
+        <Border Grid.Row="3" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,8">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" Text="{Binding StatusMessage}"
+                           Foreground="#666" VerticalAlignment="Center"/>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button Content="View Whole Assembly Overlay" Padding="10,5" Margin="0,0,8,0"
+                            Command="{Binding ViewWholeAssemblyOverlayCommand}"/>
+                    <Button Content="Export Report" Padding="10,5" Margin="0,0,8,0"
+                            Command="{Binding ExportReportCommand}"/>
+                    <Button Content="Close" Padding="10,5" IsCancel="True" Click="Close_Click"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

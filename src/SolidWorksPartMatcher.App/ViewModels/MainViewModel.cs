@@ -238,7 +238,11 @@ public sealed partial class MainViewModel : ObservableObject
 
             await LoadGroupsAsync(_lastRun.Id);
 
-            StatusText  = $"Scan complete — {_groups.Count} match group{(_groups.Count == 1 ? "" : "s")} found.";
+            var visibleCount  = FilteredGroups.Cast<object>().Count();
+            var distinctCount = _groups.Count - visibleCount;
+            StatusText = distinctCount > 0
+                ? $"Scan complete — {visibleCount} match group{(visibleCount == 1 ? "" : "s")} found ({distinctCount} confirmed distinct, hidden)."
+                : $"Scan complete — {visibleCount} match group{(visibleCount == 1 ? "" : "s")} found.";
             CanExport   = true;
             _hasScanned = true;
         }

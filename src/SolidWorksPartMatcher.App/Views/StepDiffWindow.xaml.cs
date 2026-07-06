@@ -27,11 +27,28 @@ public partial class StepDiffWindow : Window
 
     private readonly IReadOnlyList<string> _allPaths;
     private readonly List<(WCheckBox Cb, string Path)> _fileItems = [];
+    private readonly bool _useNativeAlignment;
+    private readonly bool _sideBySide;
 
-    public StepDiffWindow(string displayName, IReadOnlyList<string> allPaths)
+    // useNativeAlignment: skip the viewer's per-file centroid re-centering and overlay files in
+    // their own shared coordinate system instead. Defaults to false (existing behavior,
+    // unchanged) — pass true only when the files are known to share a common coordinate system
+    // (e.g. two versions of the same assembly), where centroid re-centering would discard a
+    // correct native alignment and replace it with a misleading one. See tools/view_steps.py.
+    //
+    // sideBySide: show each file in its own independent viewport (divided by a visible border)
+    // instead of overlaying them — sidesteps the alignment problem entirely (no registration
+    // attempt, nothing to misalign) and each viewport's camera is independent, so rotating one
+    // part never affects the other. Requires exactly 2 files; ignored otherwise. Defaults to
+    // false (existing overlay behavior, unchanged).
+    public StepDiffWindow(
+        string displayName, IReadOnlyList<string> allPaths,
+        bool useNativeAlignment = false, bool sideBySide = false)
     {
         InitializeComponent();
         _allPaths = allPaths;
+        _useNativeAlignment = useNativeAlignment;
+        _sideBySide = sideBySide;
         TitleLabel.Text = $"3D Part Comparison — {displayName}";
         BuildFileSelector();
     }
@@ -86,9 +103,9 @@ public partial class StepDiffWindow : Window
             .Select(x => x.Path)
             .ToList();
 
-        if (selected.Count < 2)
+        if (selected.Count < 1)
         {
-            SummaryLabel.Text = "Select at least 2 files to compare.";
+            SummaryLabel.Text = "Select at least 1 file to view.";
             return;
         }
 
@@ -111,10 +128,12 @@ public partial class StepDiffWindow : Window
         SummaryLabel.Text       = "Loading… tessellating parts, please wait.";
 
         // Build the command line
+        string flagArg  = (_useNativeAlignment ? "--native-align " : "")
+                        + (_sideBySide && selected.Count == 2 ? "--side-by-side " : "");
         string fileArgs = string.Join(" ", selected.Select(p => $"\"{p}\""));
         string allArgs  = script is null
-            ? fileArgs                         // bundled: view_steps.exe "f1" "f2"
-            : $"\"{script}\" {fileArgs}";      // dev:     python "script.py" "f1" "f2"
+            ? $"{flagArg}{fileArgs}"                         // bundled: view_steps.exe [--native-align] "f1" "f2"
+            : $"\"{script}\" {flagArg}{fileArgs}";           // dev:     python "script.py" [--native-align] "f1" "f2"
 
         // UseShellExecute=false + CreateNoWindow=true: no console window ever appears.
         // RedirectStandardOutput lets us detect when pyvista is ready to render.
@@ -163,9 +182,15 @@ public partial class StepDiffWindow : Window
 
             bool ready = await readyTcs.Task;
 
-            SummaryLabel.Text = ready
-                ? $"Viewing {selected.Count} file(s). Close the 3D window when done."
-                : "Viewer exited before opening — check that pyvista and build123d are installed.";
+            if (ready)
+            {
+                // The 3D window is up — this file-selector window has done its job, so close it
+                // instead of leaving it sitting behind/alongside the real viewer.
+                Close();
+                return;
+            }
+
+            SummaryLabel.Text = "Viewer exited before opening — check that pyvista and build123d are installed.";
         }
         catch (Exception ex)
         {

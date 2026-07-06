@@ -3,6 +3,7 @@ using Microsoft.Extensions.Logging;
 using SolidWorksPartMatcher.App.ViewModels;
 using SolidWorksPartMatcher.Application.Interfaces;
 using SolidWorksPartMatcher.Excel;
+using SolidWorksPartMatcher.Infrastructure.Assembly;
 using SolidWorksPartMatcher.Infrastructure.Blocking;
 using SolidWorksPartMatcher.Infrastructure.Clustering;
 using SolidWorksPartMatcher.Infrastructure.Discovery;
@@ -67,13 +68,16 @@ public partial class App : System.Windows.Application
             services.AddSingleton<ISolidWorksFileOpener, SolidWorksFileOpener>();
             services.AddSingleton<IWorkbookExporter, ClosedXmlWorkbookExporter>();
             services.AddSingleton<IScanOrchestrationService, ScanOrchestrationService>();
+            services.AddSingleton<AssemblyComponentMatcher>();
+            services.AddSingleton<IAssemblyDiffOrchestrationService, AssemblyDiffOrchestrationService>();
+            services.AddSingleton<IAssemblyDiffReportExporter, AssemblyDiffWorkbookExporter>();
 
             services.AddTransient<MainViewModel>();
             services.AddTransient<ReviewViewModel>();
 
             Services = services.BuildServiceProvider();
 
-            var window = new MainWindow();
+            var window = new LauncherWindow();
             MainWindow = window;
             window.Show();
         }

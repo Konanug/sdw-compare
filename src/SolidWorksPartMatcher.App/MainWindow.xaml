@@ -8,6 +8,30 @@
     <Window.Resources>
         <!-- Row background colour driven by review status, not classification. -->
         <SolidColorBrush x:Key="Clr.Default" Color="#F5F5F5"/>
+
+        <!-- Expand arrow toggle — shows ▶/▼, no button chrome -->
+        <Style x:Key="ExpandArrow" TargetType="ToggleButton">
+            <Setter Property="Focusable"        Value="False"/>
+            <Setter Property="ClickMode"        Value="Press"/>
+            <Setter Property="Padding"          Value="0"/>
+            <Setter Property="Margin"           Value="0,0,5,0"/>
+            <Setter Property="BorderThickness"  Value="0"/>
+            <Setter Property="Background"       Value="Transparent"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <TextBlock x:Name="Arrow" Text="▶" FontSize="9"
+                                   Foreground="#777" VerticalAlignment="Center"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Arrow" Property="Text" Value="▼"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
     </Window.Resources>
 
     <Grid>
@@ -51,6 +75,9 @@
 
             <!-- ── Toolbar ──────────────────────────────────────────────── -->
             <ToolBar Grid.Row="0" Margin="0,0,0,4" ToolBarTray.IsLocked="True">
+                <Button Content="← Back" Click="BackToLauncher_Click"
+                        AutomationProperties.Name="Back to launcher"/>
+                <Separator/>
                 <Button Content="▶  Start Scan" Command="{Binding StartScanCommand}"
                         FontSize="14" Padding="12,5"
                         AutomationProperties.Name="Start scan"/>
@@ -195,18 +222,47 @@
                 <TreeView ItemsSource="{Binding FilteredGroups}"
                           VirtualizingPanel.IsVirtualizing="True"
                           VirtualizingPanel.VirtualizationMode="Recycling"
-                          ScrollViewer.CanContentScroll="True"
+                          VirtualizingPanel.ScrollUnit="Pixel"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                           BorderBrush="#CCC" BorderThickness="1"
                           AutomationProperties.Name="Match results">
 
-                    <!-- Group container style — binds IsExpanded two-way. -->
+                    <!-- Group container style — removes the default indent/toggle column so
+                         the ContentPresenter can fill the full row width. The expand arrow is
+                         embedded inside the group header content instead. -->
                     <TreeView.ItemContainerStyle>
                         <Style TargetType="TreeViewItem" BasedOn="{StaticResource {x:Type TreeViewItem}}">
                             <Setter Property="IsExpanded"
                                     Value="{Binding IsExpanded, Mode=TwoWay}"/>
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding"                    Value="0"/>
                             <Setter Property="AutomationProperties.Name"
                                     Value="{Binding AutomationName}"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="TreeViewItem">
+                                        <Grid>
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
+                                            <ContentPresenter x:Name="PART_Header"
+                                                              Grid.Row="0"
+                                                              ContentSource="Header"
+                                                              HorizontalAlignment="Stretch"/>
+                                            <ItemsPresenter x:Name="ItemsHost"
+                                                            Grid.Row="1"
+                                                            Visibility="Collapsed"/>
+                                        </Grid>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsExpanded" Value="True">
+                                                <Setter TargetName="ItemsHost"
+                                                        Property="Visibility" Value="Visible"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
                         </Style>
                     </TreeView.ItemContainerStyle>
 
@@ -230,9 +286,11 @@
                                         <ColumnDefinition Width="Auto"/>
                                     </Grid.ColumnDefinitions>
 
-                                    <!-- "Match N" + part-count badge -->
+                                    <!-- Expand arrow + "Match N" + part-count badge -->
                                     <StackPanel Grid.Column="0" Orientation="Horizontal"
                                                 VerticalAlignment="Center">
+                                        <ToggleButton IsChecked="{Binding IsExpanded, Mode=TwoWay}"
+                                                      Style="{StaticResource ExpandArrow}"/>
                                         <TextBlock Text="{Binding DisplayName}"
                                                    FontWeight="SemiBold"/>
                                         <Border Margin="7,0,0,0" Background="#00000020"
@@ -386,7 +444,7 @@
 
                                             <!-- Open in SOLIDWORKS / Open File -->
                                             <Button Grid.Column="2"
-                                                    HorizontalAlignment="Left"
+                                                    HorizontalAlignment="Stretch"
                                                     Command="{Binding OpenInSolidWorksCommand}"
                                                     AutomationProperties.Name="{Binding OpenSwAutomationName}"
                                                     ToolTip="{Binding FullPath}">
@@ -406,7 +464,7 @@
                                             <!-- Open Folder -->
                                             <Button Grid.Column="3"
                                                     Content="Open Folder"
-                                                    HorizontalAlignment="Left"
+                                                    HorizontalAlignment="Stretch"
                                                     Style="{StaticResource ActionBtn}"
                                                     Command="{Binding OpenFolderCommand}"
                                                     AutomationProperties.Name="{Binding OpenFolderAutomationName}"
