@@ -206,12 +206,9 @@ public sealed partial class MainViewModel : ObservableObject
         if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
             return;
 
-        if (!FolderPaths.Contains(dialog.SelectedPath))
-            FolderPaths.Add(dialog.SelectedPath);
-
-        // The folder set changed, so any results from a previous scan no longer match it.
-        if (_hasScanned)
-            InvalidateResults("Folders changed — click Start Scan to refresh results.");
+        // Duplicates are allowed — the same folder may be added more than once intentionally.
+        FolderPaths.Add(dialog.SelectedPath);
+        OnFolderSetChanged();
     }
 
     [RelayCommand(CanExecute = nameof(CanEditFolders))]
@@ -221,22 +218,31 @@ public sealed partial class MainViewModel : ObservableObject
             return;
 
         FolderPaths.Remove(path);
-
-        // Removing a folder invalidates results that were scanned from it — clear them so the
-        // view reflects the current folder set rather than leaving stale parts on screen.
-        if (_hasScanned)
-            InvalidateResults("Folders changed — click Start Scan to refresh results.");
+        OnFolderSetChanged();
     }
 
     [RelayCommand(CanExecute = nameof(CanEditFolders))]
     private void RemoveAllFolders()
     {
+        // Distinct from OnFolderSetChanged: clearing every folder always resets to the empty state
+        // (with its own status), regardless of whether a scan had run.
         FolderPaths.Clear();
         InvalidateResults("Add folders and click Start Scan.");
     }
 
     // Folders may be edited any time except while a scan is actively running.
     private bool CanEditFolders() => !IsScanning;
+
+    /// <summary>
+    /// Invoked after an incremental change to <see cref="FolderPaths"/> (adding or removing one).
+    /// If a scan has already run, its results no longer match the folder set, so discard them and
+    /// prompt a re-scan. Centralizes the staleness rule shared by AddFolder and RemoveFolder.
+    /// </summary>
+    private void OnFolderSetChanged()
+    {
+        if (_hasScanned)
+            InvalidateResults("Folders changed — click Start Scan to refresh results.");
+    }
 
     // ──────────────────────────────────────────────────────────────────────────
     // Scan command

@@ -15,5 +15,6 @@ TestResults/
 *.log
 tools/build/
 tools/dist/
-Test4/
 Test6/
+graphify-out/
+scratchpad/
