@@ -160,7 +160,10 @@ public sealed class MirrorDetectionTests
     [InlineData("MirrorSolid")]
     [InlineData("Mirror")]
     [InlineData("BodyMirror")]
-    [InlineData("mirrorsolid")]   // case-insensitive
+    [InlineData("mirrorsolid")]      // case-insensitive
+    [InlineData("MirrorPattern")]    // substring variant — SW mirror-pattern feature
+    [InlineData("MirrorComponent")]  // substring variant
+    [InlineData("ImportedMirror")]   // substring variant — derived/imported mirror
     public void HasMirrorFeature_RecognisesKnownTypes(string featureType)
     {
         var hist = new Dictionary<string, int> { [featureType] = 1 };
@@ -170,6 +173,7 @@ public sealed class MirrorDetectionTests
     [Fact]
     public void HasMirrorFeature_DoesNotFire_ForOrdinaryFeatures()
     {
+        // None of these contain the word "mirror", so the broadened substring check stays silent.
         var hist = new Dictionary<string, int> { ["Extrude"] = 2, ["Fillet"] = 3, ["Cut"] = 1 };
         ScanOrchestrationService.HasMirrorFeature(hist).Should().BeFalse();
     }

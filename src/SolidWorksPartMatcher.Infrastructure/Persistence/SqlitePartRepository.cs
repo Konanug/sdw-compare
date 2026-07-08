@@ -166,6 +166,15 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         MigrateIfNeededSafe(7,
             "ALTER TABLE fingerprints ADD COLUMN source_format TEXT NOT NULL DEFAULT 'SLDPRT';",
             "ALTER TABLE fingerprints ADD COLUMN face_geometric_signature TEXT;");
+
+        // Migration v8: index the fingerprint cache key. GetFingerprintAsync looks fingerprints up
+        // by (file_sha256, config_name, extractor_version) to reuse geometry across scans; without
+        // an index that lookup table-scans as the fingerprints table accumulates rows over many
+        // scans. (The old SHA-based UNIQUE index was dropped in v2 in favour of a per-file one, so
+        // this is a non-unique lookup index — multiple scans legitimately store the same key.)
+        MigrateIfNeeded(8,
+            "CREATE INDEX IF NOT EXISTS ix_fingerprints_cache_lookup " +
+            "ON fingerprints(file_sha256, config_name, extractor_version);");
     }
 
     private void MigrateIfNeeded(int version, string sql)
@@ -353,8 +362,31 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
-    public Task<PartFingerprint?> GetFingerprintAsync(string sha256, string configName, int extractorVersion, CancellationToken ct)
-        => Task.FromResult<PartFingerprint?>(null);
+    // Fingerprint cache read. Because the key is (file bytes via SHA-256, configuration, extractor
+    // version), a hit is provably identical to re-extracting: identical bytes yield identical
+    // geometry, and the extractor-version component invalidates automatically on any extractor
+    // change. Rows from prior scan runs persist, so this reuses geometry across scans and avoids
+    // re-opening the file in SolidWorks — the dominant cost of a repeat scan. Returns the most
+    // recent matching row (all matches share the same geometry by construction).
+    public async Task<PartFingerprint?> GetFingerprintAsync(
+        string sha256, string configName, int extractorVersion, CancellationToken ct)
+    {
+        using var cmd = _conn.CreateCommand();
+        cmd.CommandText = """
+            SELECT f.* FROM fingerprints f
+            WHERE f.file_sha256 = @sha AND f.config_name = @config AND f.extractor_version = @ver
+            ORDER BY f.extracted_utc DESC
+            LIMIT 1
+            """;
+        cmd.Parameters.AddWithValue("@sha", sha256);
+        cmd.Parameters.AddWithValue("@config", configName);
+        cmd.Parameters.AddWithValue("@ver", extractorVersion);
+
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (await reader.ReadAsync(ct))
+            return ReadFingerprint(reader);
+        return null;
+    }
 
     public async Task<IReadOnlyList<PartFingerprint>> GetAllFingerprintsAsync(Guid scanRunId, CancellationToken ct)
     {
