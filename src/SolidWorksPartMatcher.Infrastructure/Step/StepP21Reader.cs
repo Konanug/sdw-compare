@@ -191,7 +191,7 @@ public sealed class StepP21Reader
         double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double r);
         double.TryParse(m.Groups[3].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double ha);
         apexRadiusM = r * LengthScaleToMetres;
-        halfAngle   = ha; // radians — no scale
+        halfAngle = ha; // radians — no scale
         TryGetAxisPlacement(placeId, out _, out axis, out _);
         return true;
     }
@@ -209,7 +209,7 @@ public sealed class StepP21Reader
         double.TryParse(m.Groups[2].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double r);
         double.TryParse(m.Groups[3].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out double ha);
         apexRadiusM = r * LengthScaleToMetres;
-        halfAngle   = ha;
+        halfAngle = ha;
         TryGetAxisPlacement(placeId, out axisOrigin, out axisDir, out _);
         return true;
     }
@@ -325,13 +325,13 @@ public sealed class StepP21Reader
                 out double[]? axisDir, out double? radius);
 
             result.Add(new StepFaceGeometry(
-                SurfaceId:      surfId,
-                SurfaceType:    surfType,
-                Descriptor:     descriptor,
+                SurfaceId: surfId,
+                SurfaceType: surfType,
+                Descriptor: descriptor,
                 BoundaryPoints: boundaryPoints,
-                AxisOrigin:     axisOrigin,
-                AxisDirection:  axisDir,
-                Radius:         radius));
+                AxisOrigin: axisOrigin,
+                AxisDirection: axisDir,
+                Radius: radius));
         }
 
         return result;
@@ -347,17 +347,17 @@ public sealed class StepP21Reader
         // For SPHERICAL_SURFACE: sampling the great-circle boundary creates a large flat disk artifact
         bool wantCircleSamples = surfType is "PLANE" or "CYLINDRICAL_SURFACE" or "CONICAL_SURFACE";
 
-        var seen        = new HashSet<int>();
+        var seen = new HashSet<int>();
         var seenCircles = new HashSet<int>();
-        var pts         = new List<double[]>();
+        var pts = new List<double[]>();
         // Only outer bounds — inner bounds (holes) cause fan-triangulation artifacts
-        var faceBindRx  = new Regex(@"FACE_OUTER_BOUND\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
-        var edgeLoopRx  = new Regex(@"EDGE_LOOP\s*\(\s*'[^']*'\s*,\s*\(\s*((?:#\d+\s*,?\s*)+)\)", RegexOptions.Compiled);
-        var orientRx    = new Regex(@"ORIENTED_EDGE\s*\(\s*'[^']*'\s*,\s*\*\s*,\s*\*\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        var faceBindRx = new Regex(@"FACE_OUTER_BOUND\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
+        var edgeLoopRx = new Regex(@"EDGE_LOOP\s*\(\s*'[^']*'\s*,\s*\(\s*((?:#\d+\s*,?\s*)+)\)", RegexOptions.Compiled);
+        var orientRx = new Regex(@"ORIENTED_EDGE\s*\(\s*'[^']*'\s*,\s*\*\s*,\s*\*\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
         // Capture group 3 = curve geometry ref (LINE, CIRCLE, B_SPLINE…)
         var edgeCurveRx = new Regex(@"EDGE_CURVE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,", RegexOptions.Compiled);
-        var vertexRx    = new Regex(@"VERTEX_POINT\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*\)", RegexOptions.Compiled);
-        var circleRx    = new Regex(@"CIRCLE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*\)", RegexOptions.Compiled);
+        var vertexRx = new Regex(@"VERTEX_POINT\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*\)", RegexOptions.Compiled);
+        var circleRx = new Regex(@"CIRCLE\s*\(\s*'[^']*'\s*,\s*(#\d+)\s*,\s*([0-9Ee.+\-]+)\s*\)", RegexOptions.Compiled);
 
         foreach (var boundId in boundRefs)
         {
@@ -412,10 +412,10 @@ public sealed class StepP21Reader
                 if (!TryGetAxisPlacement(placeId, out var cen, out var coneAx, out var refDir)) continue;
 
                 // tangent = axisDir × refDir  (builds 2D basis in the circle plane)
-                double tx = coneAx[1]*refDir[2] - coneAx[2]*refDir[1];
-                double ty = coneAx[2]*refDir[0] - coneAx[0]*refDir[2];
-                double tz = coneAx[0]*refDir[1] - coneAx[1]*refDir[0];
-                double tlen = Math.Sqrt(tx*tx + ty*ty + tz*tz);
+                double tx = coneAx[1] * refDir[2] - coneAx[2] * refDir[1];
+                double ty = coneAx[2] * refDir[0] - coneAx[0] * refDir[2];
+                double tz = coneAx[0] * refDir[1] - coneAx[1] * refDir[0];
+                double tlen = Math.Sqrt(tx * tx + ty * ty + tz * tz);
                 if (tlen < 1e-10) continue;
                 tx /= tlen; ty /= tlen; tz /= tlen;
 
@@ -568,10 +568,10 @@ public sealed class StepP21Reader
         foreach (var (_, raw) in _raw)
         {
             if (!raw.Contains("LENGTH_UNIT")) continue;
-            if (raw.Contains(".MILLI., .METRE."))   { LengthScaleToMetres = 1e-3;   return; }
-            if (raw.Contains(".CENTI., .METRE."))   { LengthScaleToMetres = 1e-2;   return; }
-            if (raw.Contains(".METRE."))             { LengthScaleToMetres = 1.0;    return; }
-            if (raw.Contains(".INCH."))              { LengthScaleToMetres = 0.0254; return; }
+            if (raw.Contains(".MILLI., .METRE.")) { LengthScaleToMetres = 1e-3; return; }
+            if (raw.Contains(".CENTI., .METRE.")) { LengthScaleToMetres = 1e-2; return; }
+            if (raw.Contains(".METRE.")) { LengthScaleToMetres = 1.0; return; }
+            if (raw.Contains(".INCH.")) { LengthScaleToMetres = 0.0254; return; }
         }
         // Default: millimetres (most common for SolidWorks exports)
         LengthScaleToMetres = 1e-3;

@@ -18,8 +18,12 @@ namespace SolidWorksPartMatcher.Infrastructure.Assembly;
 /// probable renames — that's a different concern (which parts correspond to which) from
 /// deciding whether a confirmed-same part changed.
 ///
-/// Orientation/position tracking has been removed entirely for now (to be revisited later) —
-/// this matcher only ever reports shape/volume and quantity differences.
+/// Position tracking is additive and orthogonal to shape classification: whether any instance of
+/// a part sits in a different place in the assembly is reported as its own "What changed" bullet
+/// (see <see cref="OccurrencePositionComparer"/>), never influencing <see cref="AssemblyDiffType"/>
+/// and never suppressed by it — a part can change shape/volume and also move, or move without any
+/// shape change. It is a coarse per-product yes/no, never a per-instance identification. Only
+/// position is compared; orientation/rotation remains out of scope.
 /// </summary>
 public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
 {
@@ -122,8 +126,8 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         AssemblyDiffTolerances tol, double? geometricSimilarity)
     {
         double volDeltaPct = RelativeDeltaPercent(compA.VolumeM3, compB.VolumeM3);
-        double saDeltaPct  = RelativeDeltaPercent(compA.SurfaceAreaM2, compB.SurfaceAreaM2);
-        int faceDelta      = compB.FaceCount - compA.FaceCount;
+        double saDeltaPct = RelativeDeltaPercent(compA.SurfaceAreaM2, compB.SurfaceAreaM2);
+        int faceDelta = compB.FaceCount - compA.FaceCount;
 
         bool quantityChanged = compA.InstanceCount.HasValue && compB.InstanceCount.HasValue
             && compA.InstanceCount.Value != compB.InstanceCount.Value;
@@ -164,17 +168,23 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
             }
         }
 
+        // Position comparison is additive and independent of DiffType (see class doc): a coarse
+        // per-product yes/no over the two versions' occurrence-position sets, never gated behind
+        // the shape classification and never pinpointing which/how many instances moved.
+        bool? positionChanged = OccurrencePositionComparer.PositionChanged(
+            compA.OccurrencePositionsM, compB.OccurrencePositionsM, tol.PositionChangeMetersThreshold);
+
         var reasons = BuildReasons(
             quantityChanged, compA.InstanceCount, compB.InstanceCount,
             suspiciousNameCollision,
             geometricSimilarity.HasValue && !suspiciousNameCollision,
-            diffType, volDeltaPct);
+            diffType, volDeltaPct, positionChanged);
 
         return new AssemblyComponentDiff(
             key, compA, compB, diffType, quantityChanged,
             compA.InstanceCount, compB.InstanceCount,
             volDeltaPct, saDeltaPct, faceDelta,
-            geometricSimilarity, reasons);
+            geometricSimilarity, reasons, positionChanged);
     }
 
     // Builds short, plain-English bullet points — no raw internal measurements, no jargon.
@@ -183,7 +193,7 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
     private static List<string> BuildReasons(
         bool quantityChanged, int? instanceCountA, int? instanceCountB,
         bool suspiciousNameCollision, bool matchedByGeometry,
-        AssemblyDiffType diffType, double volDeltaPct)
+        AssemblyDiffType diffType, double volDeltaPct, bool? positionChanged)
     {
         var reasons = new List<string>();
 
@@ -208,6 +218,11 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
                     ? $"Volume increased by {Math.Abs(volDeltaPct):0.####}%."
                     : $"Volume decreased by {Math.Abs(volDeltaPct):0.####}%.");
         }
+
+        // Position is reported unconditionally — additive to (and never suppressed by) the shape
+        // classification above. A coarse per-product yes/no: no count, no per-instance detail.
+        if (positionChanged == true)
+            reasons.Add("Position changed in the assembly.");
 
         if (reasons.Count == 0)
             reasons.Add("No differences found.");

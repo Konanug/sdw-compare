@@ -13,7 +13,7 @@ public sealed class SolidWorksFileOpener : ISolidWorksFileOpener
 {
     // Open silently (suppress dialogs) but writeable so the user can save changes.
     private const int SwDocPart = (int)swDocumentTypes_e.swDocPART;
-    private const int OpenOpts  = (int)swOpenDocOptions_e.swOpenDocOptions_Silent;
+    private const int OpenOpts = (int)swOpenDocOptions_e.swOpenDocOptions_Silent;
 
     private readonly StaSolidWorksWorker _worker;
     private readonly ILogger<SolidWorksFileOpener> _logger;

@@ -12,7 +12,7 @@ public static class StepEntityClosureWalker
     public static HashSet<int> ComputeClosure(StepP21Reader reader, int startId, int maxEntities = 200_000)
     {
         var visited = new HashSet<int> { startId };
-        var queue   = new Queue<int>();
+        var queue = new Queue<int>();
         queue.Enqueue(startId);
 
         while (queue.Count > 0)

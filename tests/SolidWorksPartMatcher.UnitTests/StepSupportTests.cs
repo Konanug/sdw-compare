@@ -54,7 +54,7 @@ public sealed class StepSupportTests
 
     [Theory]
     [InlineData("#1=PRODUCT('PART-001','Bracket Assembly','',());", "Bracket Assembly")]
-    [InlineData("#42=PRODUCT('id','','description',());",           "id")]
+    [InlineData("#42=PRODUCT('id','','description',());", "id")]
     [InlineData("#123=PRODUCT('bolt','M8 Hex Bolt','DIN 933',());", "M8 Hex Bolt")]
     public void StepProductRegex_ExtractsPartName(string line, string expected)
     {

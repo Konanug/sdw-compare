@@ -15,14 +15,14 @@ public sealed class AssemblyDiffWorkbookExporterTests : IDisposable
         ProductId: name, ProductName: name, MatchKey: name, InstanceCount: qty,
         SortedBoundingBoxM: [0.01, 0.02, 0.03], VolumeM3: 0.00001, SurfaceAreaM2: 0.001,
         FaceCount: 6, FaceTypeHistogram: new Dictionary<string, int>(),
-        FaceGeometricSignature: [], EntityClosure: []);
+        FaceGeometricSignature: [], EntityClosure: [], OccurrencePositionsM: []);
 
     [Fact]
     public async Task ExportAsync_ProducesWorkbook_WithExpectedSheets()
     {
         var a1 = MakeComponent("MODIFIED-PART", qty: 2);
         var b1 = a1 with { SortedBoundingBoxM = [0.02, 0.03, 0.04], VolumeM3 = 0.00003, InstanceCount = 3 };
-        var addedComp   = MakeComponent("ADDED-PART");
+        var addedComp = MakeComponent("ADDED-PART");
         var removedComp = MakeComponent("REMOVED-PART");
 
         var diffs = new List<AssemblyComponentDiff>

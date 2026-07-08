@@ -13,7 +13,8 @@ public sealed class AssemblyComponentMatcherTests
     private readonly AssemblyDiffTolerances _tol = AssemblyDiffTolerances.Default;
 
     private static AssemblyComponent MakeComponent(
-        string name, double[] bb, double volume, int faceCount = 6, int? instanceCount = 1)
+        string name, double[] bb, double volume, int faceCount = 6, int? instanceCount = 1,
+        IReadOnlyList<double[]>? occurrencePositions = null)
         => new(
             ProductId: name,
             ProductName: name,
@@ -25,7 +26,8 @@ public sealed class AssemblyComponentMatcherTests
             FaceCount: faceCount,
             FaceTypeHistogram: new Dictionary<string, int> { ["PLANE"] = faceCount },
             FaceGeometricSignature: [],
-            EntityClosure: []);
+            EntityClosure: [],
+            OccurrencePositionsM: occurrencePositions ?? []);
 
     private AssemblyStructure Struct(params AssemblyComponent[] components) => new(components, []);
 
@@ -220,6 +222,74 @@ public sealed class AssemblyComponentMatcherTests
         summary.Components.Select(c => c.MatchKey).Should().ContainInOrder("Q-PART", "Z-PLAIN");
     }
 
+    private static readonly double[][] AtOrigin = [[0, 0, 0]];
+    private static readonly double[][] MovedOneMetre = [[1, 0, 0]];
+
+    [Fact]
+    public void PositionChanged_ReportedEvenWhenVolumeUnchanged()
+    {
+        var a = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001, occurrencePositions: AtOrigin);
+        var b = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001, occurrencePositions: MovedOneMetre);
+
+        var diff = _matcher.Diff(Struct(a), Struct(b), _tol, "A.step", "B.step").Components.Single();
+
+        diff.DiffType.Should().Be(AssemblyDiffType.Unchanged); // volume/shape identical
+        diff.PositionChanged.Should().BeTrue();
+        diff.Reasons.Should().Contain("Position changed in the assembly.");
+    }
+
+    [Fact]
+    public void PositionChanged_ReportedAlongsideModifiedVolume()
+    {
+        var a = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001, occurrencePositions: AtOrigin);
+        var b = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00002, occurrencePositions: MovedOneMetre);
+
+        var diff = _matcher.Diff(Struct(a), Struct(b), _tol, "A.step", "B.step").Components.Single();
+
+        diff.DiffType.Should().Be(AssemblyDiffType.Modified);
+        diff.PositionChanged.Should().BeTrue();
+        diff.Reasons.Should().Contain("Position changed in the assembly.");
+        diff.Reasons.Should().Contain(r => r.StartsWith("Volume")); // both facts reported, additively
+    }
+
+    [Fact]
+    public void PositionChanged_ReportedAlongsideSuspiciousMatch()
+    {
+        var a = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001, faceCount: 6, occurrencePositions: AtOrigin);
+        var b = MakeComponent("PART-X", [1.0, 2.0, 3.0], 6.0, faceCount: 200, occurrencePositions: MovedOneMetre);
+
+        var diff = _matcher.Diff(Struct(a), Struct(b), _tol, "A.step", "B.step").Components.Single();
+
+        diff.DiffType.Should().Be(AssemblyDiffType.SuspiciousMatch);
+        diff.PositionChanged.Should().BeTrue();
+        diff.Reasons.Should().Contain("Position changed in the assembly.");
+    }
+
+    [Fact]
+    public void NoPositionReporting_WhenOccurrencePositionsAbsent()
+    {
+        var a = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001);
+        var b = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001);
+
+        var diff = _matcher.Diff(Struct(a), Struct(b), _tol, "A.step", "B.step").Components.Single();
+
+        diff.PositionChanged.Should().BeNull();
+        diff.Reasons.Should().NotContain(r => r.Contains("Position changed"));
+    }
+
+    [Fact]
+    public void PositionUnchanged_WhenOccurrencePositionsMatch()
+    {
+        double[][] positions = [[0, 0, 0], [1, 0, 0]];
+        var a = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001, occurrencePositions: positions);
+        var b = MakeComponent("PART-X", [0.01, 0.02, 0.03], 0.00001, occurrencePositions: positions);
+
+        var diff = _matcher.Diff(Struct(a), Struct(b), _tol, "A.step", "B.step").Components.Single();
+
+        diff.PositionChanged.Should().BeFalse();
+        diff.Reasons.Should().NotContain(r => r.Contains("Position changed"));
+    }
+
     [Fact]
     public void DuplicateNameWithinOneAssembly_LogsWarning()
     {
@@ -235,8 +305,8 @@ public sealed class AssemblyComponentMatcherTests
     [Fact]
     public void Output_IsDeterministicallyOrdered()
     {
-        var removed  = MakeComponent("Z-REMOVED", [0.01, 0.01, 0.01], 0.000001, faceCount: 6);
-        var added    = MakeComponent("A-ADDED", [0.9, 1.1, 1.3], 0.5, faceCount: 60);
+        var removed = MakeComponent("Z-REMOVED", [0.01, 0.01, 0.01], 0.000001, faceCount: 6);
+        var added = MakeComponent("A-ADDED", [0.9, 1.1, 1.3], 0.5, faceCount: 60);
         var modified = MakeComponent("M-MODIFIED", [0.01, 0.02, 0.03], 0.00001);
         var modifiedB = modified with { SortedBoundingBoxM = [0.02, 0.04, 0.06], VolumeM3 = 0.00008 };
         var unchanged = MakeComponent("U-UNCHANGED", [0.01, 0.02, 0.03], 0.00001);

@@ -115,12 +115,12 @@ public static class OcctVolumeRefiner
         succeeded = false;
         var psi = new ProcessStartInfo(exe)
         {
-            UseShellExecute        = false,
-            CreateNoWindow         = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
             RedirectStandardOutput = true,
-            RedirectStandardError  = true,
+            RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding  = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
         if (script is not null) psi.ArgumentList.Add(script);
         psi.ArgumentList.Add(manifestPath);

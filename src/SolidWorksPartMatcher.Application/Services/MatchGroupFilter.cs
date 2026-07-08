@@ -11,16 +11,16 @@ public static class MatchGroupFilter
     /// <summary>Human-readable label for a classification.</summary>
     public static string ToLabel(PartClassification cls) => cls switch
     {
-        PartClassification.BinaryDuplicate               => "Geometry Match (Identical Copy)",
-        PartClassification.ExactGeometryMatch            => "Geometry Match",
-        PartClassification.GeometryMatchMetadataVariant  => "Geometry Match (Metadata Variant)",
-        PartClassification.MirrorOrHandedVariant         => "Geometry Match (Mirror Variant)",
-        PartClassification.RevisionFamily                => "Geometry Match (Revision Family)",
-        PartClassification.EngravingVariant              => "Geometry Match (Engraving Variant)",
-        PartClassification.PossibleMatch                 => "Possible Match",
-        PartClassification.Distinct                      => "Distinct",
-        PartClassification.ComparisonFailed              => "Comparison Failed",
-        _                                                => cls.ToString()
+        PartClassification.BinaryDuplicate => "Geometry Match (Identical Copy)",
+        PartClassification.ExactGeometryMatch => "Geometry Match",
+        PartClassification.GeometryMatchMetadataVariant => "Geometry Match (Metadata Variant)",
+        PartClassification.MirrorOrHandedVariant => "Geometry Match (Mirror Variant)",
+        PartClassification.RevisionFamily => "Geometry Match (Revision Family)",
+        PartClassification.EngravingVariant => "Geometry Match (Engraving Variant)",
+        PartClassification.PossibleMatch => "Possible Match",
+        PartClassification.Distinct => "Distinct",
+        PartClassification.ComparisonFailed => "Comparison Failed",
+        _ => cls.ToString()
     };
 
     /// <summary>

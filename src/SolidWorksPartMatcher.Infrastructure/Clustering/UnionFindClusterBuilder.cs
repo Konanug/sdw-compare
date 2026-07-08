@@ -120,29 +120,29 @@ public sealed class UnionFindClusterBuilder : IClusterBuilder
         bool hasMirrorPair = false;
 
         for (var i = 0; i < members.Count; i++)
-        for (var j = i + 1; j < members.Count; j++)
-        {
-            var key = members[i].Id.CompareTo(members[j].Id) <= 0
-                ? (members[i].Id, members[j].Id)
-                : (members[j].Id, members[i].Id);
-            if (!pairs.TryGetValue(key, out var pair)) continue;
+            for (var j = i + 1; j < members.Count; j++)
+            {
+                var key = members[i].Id.CompareTo(members[j].Id) <= 0
+                    ? (members[i].Id, members[j].Id)
+                    : (members[j].Id, members[i].Id);
+                if (!pairs.TryGetValue(key, out var pair)) continue;
 
-            if (pair.Classification == PartClassification.ExactGeometryMatch)
-                return PartClassification.ExactGeometryMatch;
-            if (pair.Classification == PartClassification.GeometryMatchMetadataVariant)
-                hasMetadataVariant = true;
-            if (pair.Classification == PartClassification.EngravingVariant)
-                hasEngravingPair = true;
-            if (pair.Classification == PartClassification.RevisionFamily)
-                hasRevisionPair = true;
-            if (pair.Classification == PartClassification.MirrorOrHandedVariant)
-                hasMirrorPair = true;
-        }
+                if (pair.Classification == PartClassification.ExactGeometryMatch)
+                    return PartClassification.ExactGeometryMatch;
+                if (pair.Classification == PartClassification.GeometryMatchMetadataVariant)
+                    hasMetadataVariant = true;
+                if (pair.Classification == PartClassification.EngravingVariant)
+                    hasEngravingPair = true;
+                if (pair.Classification == PartClassification.RevisionFamily)
+                    hasRevisionPair = true;
+                if (pair.Classification == PartClassification.MirrorOrHandedVariant)
+                    hasMirrorPair = true;
+            }
 
         if (hasMetadataVariant) return PartClassification.GeometryMatchMetadataVariant;
-        if (hasEngravingPair)   return PartClassification.EngravingVariant;
-        if (hasRevisionPair)    return PartClassification.RevisionFamily;
-        if (hasMirrorPair)      return PartClassification.MirrorOrHandedVariant;
+        if (hasEngravingPair) return PartClassification.EngravingVariant;
+        if (hasRevisionPair) return PartClassification.RevisionFamily;
+        if (hasMirrorPair) return PartClassification.MirrorOrHandedVariant;
         return PartClassification.PossibleMatch;
     }
 }

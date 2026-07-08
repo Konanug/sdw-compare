@@ -4,11 +4,11 @@ using System.Text;
 using System.Windows;
 using System.Windows.Media;
 
-using WCheckBox   = System.Windows.Controls.CheckBox;
-using WEllipse    = System.Windows.Shapes.Ellipse;
-using WTextBlock  = System.Windows.Controls.TextBlock;
+using WCheckBox = System.Windows.Controls.CheckBox;
+using WEllipse = System.Windows.Shapes.Ellipse;
+using WTextBlock = System.Windows.Controls.TextBlock;
 using WStackPanel = System.Windows.Controls.StackPanel;
-using WColor      = System.Windows.Media.Color;
+using WColor = System.Windows.Media.Color;
 
 namespace SolidWorksPartMatcher.App.Views;
 
@@ -63,8 +63,9 @@ public partial class StepDiffWindow : Window
 
             var dot = new WEllipse
             {
-                Width  = 10, Height = 10,
-                Fill   = new SolidColorBrush(color),
+                Width = 10,
+                Height = 10,
+                Fill = new SolidColorBrush(color),
                 Margin = new Thickness(0, 0, 5, 0),
                 VerticalAlignment = VerticalAlignment.Center
             };
@@ -84,9 +85,9 @@ public partial class StepDiffWindow : Window
 
             var cb = new WCheckBox
             {
-                Content   = row,
+                Content = row,
                 IsChecked = true,
-                Margin    = new Thickness(0, 3, 0, 3)
+                Margin = new Thickness(0, 3, 0, 3)
             };
 
             _fileItems.Add((cb, _allPaths[i]));
@@ -124,14 +125,14 @@ public partial class StepDiffWindow : Window
         }
 
         CompareButton.IsEnabled = false;
-        LoadingBar.Visibility   = Visibility.Visible;
-        SummaryLabel.Text       = "Loading… tessellating parts, please wait.";
+        LoadingBar.Visibility = Visibility.Visible;
+        SummaryLabel.Text = "Loading… tessellating parts, please wait.";
 
         // Build the command line
-        string flagArg  = (_useNativeAlignment ? "--native-align " : "")
+        string flagArg = (_useNativeAlignment ? "--native-align " : "")
                         + (_sideBySide && selected.Count == 2 ? "--side-by-side " : "");
         string fileArgs = string.Join(" ", selected.Select(p => $"\"{p}\""));
-        string allArgs  = script is null
+        string allArgs = script is null
             ? $"{flagArg}{fileArgs}"                         // bundled: view_steps.exe [--native-align] "f1" "f2"
             : $"\"{script}\" {flagArg}{fileArgs}";           // dev:     python "script.py" [--native-align] "f1" "f2"
 
@@ -140,12 +141,12 @@ public partial class StepDiffWindow : Window
         // RedirectStandardError drains VTK noise silently so the pipe never blocks.
         var psi = new ProcessStartInfo(exe, allArgs)
         {
-            UseShellExecute        = false,
-            CreateNoWindow         = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
             RedirectStandardOutput = true,
-            RedirectStandardError  = true,
+            RedirectStandardError = true,
             StandardOutputEncoding = Encoding.UTF8,
-            StandardErrorEncoding  = Encoding.UTF8,
+            StandardErrorEncoding = Encoding.UTF8,
         };
 
         try
@@ -203,7 +204,7 @@ public partial class StepDiffWindow : Window
         }
         finally
         {
-            LoadingBar.Visibility   = Visibility.Collapsed;
+            LoadingBar.Visibility = Visibility.Collapsed;
             CompareButton.IsEnabled = true;
         }
     }

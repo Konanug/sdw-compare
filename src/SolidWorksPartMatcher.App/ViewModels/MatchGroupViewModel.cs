@@ -20,7 +20,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     public string DisplayName { get; }
 
     [ObservableProperty] private string? _canonicalName;
-    [ObservableProperty] private bool    _isExpanded;
+    [ObservableProperty] private bool _isExpanded;
     [ObservableProperty] private string? _statusMessage;
 
     public PartClassification Classification { get; }
@@ -49,12 +49,12 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     {
         ReviewStatus.Approved => BrushApproved,
         ReviewStatus.Rejected => BrushRejected,
-        _                     => BrushPending,
+        _ => BrushPending,
     };
 
     private static readonly System.Windows.Media.Brush BrushApproved = MakeBrush("#E8F5E9");
     private static readonly System.Windows.Media.Brush BrushRejected = MakeBrush("#FFEBEE");
-    private static readonly System.Windows.Media.Brush BrushPending  = MakeBrush("#F5F5F5");
+    private static readonly System.Windows.Media.Brush BrushPending = MakeBrush("#F5F5F5");
 
     private static System.Windows.Media.Brush MakeBrush(string hex)
     {
@@ -80,15 +80,15 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         IPartRepository repo,
         ILogger<MatchGroupViewModel> logger)
     {
-        ClusterId           = cluster.Id;
-        DisplayName         = displayName;
-        _canonicalName      = cluster.CanonicalName;
-        Classification      = cluster.Classification;
+        ClusterId = cluster.Id;
+        DisplayName = displayName;
+        _canonicalName = cluster.CanonicalName;
+        Classification = cluster.Classification;
         ClassificationLabel = MatchGroupFilter.ToLabel(cluster.Classification);
-        _reviewStatus       = cluster.ReviewStatus;
-        _repo               = repo;
-        _logger             = logger;
-        Files               = new ObservableCollection<MatchFileViewModel>(files);
+        _reviewStatus = cluster.ReviewStatus;
+        _repo = repo;
+        _logger = logger;
+        Files = new ObservableCollection<MatchFileViewModel>(files);
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
             await _repo.UpdateClusterReviewAsync(
                 ClusterId, ReviewStatus.Approved, null,
                 Environment.UserName, DateTime.UtcNow, CancellationToken.None);
-            ReviewStatus  = ReviewStatus.Approved;
+            ReviewStatus = ReviewStatus.Approved;
             StatusMessage = "Approved.";
             _logger.LogInformation("Cluster {Id} approved by {User}", ClusterId, Environment.UserName);
         }
@@ -136,7 +136,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
             await _repo.UpdateClusterReviewAsync(
                 ClusterId, ReviewStatus.Pending, null,
                 Environment.UserName, DateTime.UtcNow, CancellationToken.None);
-            ReviewStatus  = ReviewStatus.Pending;
+            ReviewStatus = ReviewStatus.Pending;
             StatusMessage = "Reset to pending.";
             _logger.LogInformation("Cluster {Id} reset to pending by {User}", ClusterId, Environment.UserName);
         }
@@ -155,7 +155,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
             await _repo.UpdateClusterReviewAsync(
                 ClusterId, ReviewStatus.Rejected, "Rejected by reviewer",
                 Environment.UserName, DateTime.UtcNow, CancellationToken.None);
-            ReviewStatus  = ReviewStatus.Rejected;
+            ReviewStatus = ReviewStatus.Rejected;
             StatusMessage = "Rejected.";
             _logger.LogInformation("Cluster {Id} rejected by {User}", ClusterId, Environment.UserName);
         }

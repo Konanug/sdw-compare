@@ -25,8 +25,10 @@ public sealed class ComputeComponentVolumeScriptTests
         {
             var psi = new ProcessStartInfo("python")
             {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             psi.ArgumentList.Add("-c");
             psi.ArgumentList.Add("import build123d");
@@ -55,8 +57,10 @@ public sealed class ComputeComponentVolumeScriptTests
 
             var psi = new ProcessStartInfo("python")
             {
-                UseShellExecute = false, CreateNoWindow = true,
-                RedirectStandardOutput = true, RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
             };
             psi.ArgumentList.Add(scriptPath);
             psi.ArgumentList.Add(manifestPath);

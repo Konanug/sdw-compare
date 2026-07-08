@@ -1,0 +1,13 @@
+Copyright (c) 2026 Alan. All rights reserved.
+
+This software and its source code are provided for internal use and evaluation.
+No license to use, copy, modify, or distribute is granted by this file.
+
+TODO: Before publishing this repository publicly, replace this file with an
+explicit license (e.g. MIT, Apache-2.0, or a proprietary EULA). Until then, all
+rights are reserved by the copyright holder.
+
+NOTE: This project integrates with SOLIDWORKS via its COM API and bundles a
+Python/OpenCASCADE (build123d) runtime for STEP geometry. Those components carry
+their own third-party licenses, which continue to apply regardless of the
+license chosen for this project.

@@ -1,4 +1,5 @@
 using FluentAssertions;
+using SolidWorksPartMatcher.Infrastructure.Assembly;
 using SolidWorksPartMatcher.Infrastructure.Step;
 using SolidWorksPartMatcher.Infrastructure.Step.Assembly;
 using Xunit;
@@ -94,6 +95,47 @@ public sealed class StepAssemblyStructureReaderTests
         #503=NEXT_ASSEMBLY_USAGE_OCCURRENCE('N4','N4','N4',#303,#103,'N4');
         #504=NEXT_ASSEMBLY_USAGE_OCCURRENCE('N5','N5','N5',#303,#203,'N5');
 
+        #600=CARTESIAN_POINT('',(0.,0.,0.));
+        #601=DIRECTION('',(0.,0.,1.));
+        #602=DIRECTION('',(1.,0.,0.));
+        #603=DIRECTION('',(0.,1.,0.));
+        #604=AXIS2_PLACEMENT_3D('',#600,#601,#602);
+
+        #610=CARTESIAN_POINT('',(100.,0.,0.));
+        #611=AXIS2_PLACEMENT_3D('',#610,#601,#602);
+        #612=ITEM_DEFINED_TRANSFORMATION('','',#604,#611);
+        #613=REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#612);
+        #614=PRODUCT_DEFINITION_SHAPE('',$,#500);
+        #615=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#613,#614);
+
+        #620=CARTESIAN_POINT('',(0.,0.,0.));
+        #621=AXIS2_PLACEMENT_3D('',#620,#601,#603);
+        #622=ITEM_DEFINED_TRANSFORMATION('','',#604,#621);
+        #623=REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#622);
+        #624=PRODUCT_DEFINITION_SHAPE('',$,#501);
+        #625=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#623,#624);
+
+        #630=CARTESIAN_POINT('',(200.,0.,0.));
+        #631=AXIS2_PLACEMENT_3D('',#630,#601,#602);
+        #632=ITEM_DEFINED_TRANSFORMATION('','',#604,#631);
+        #633=REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#632);
+        #634=PRODUCT_DEFINITION_SHAPE('',$,#502);
+        #635=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#633,#634);
+
+        #640=CARTESIAN_POINT('',(10.,0.,0.));
+        #641=AXIS2_PLACEMENT_3D('',#640,#601,#602);
+        #642=ITEM_DEFINED_TRANSFORMATION('','',#604,#641);
+        #643=REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#642);
+        #644=PRODUCT_DEFINITION_SHAPE('',$,#503);
+        #645=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#643,#644);
+
+        #650=CARTESIAN_POINT('',(0.,5.,0.));
+        #651=AXIS2_PLACEMENT_3D('',#650,#601,#602);
+        #652=ITEM_DEFINED_TRANSFORMATION('','',#604,#651);
+        #653=REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION(#652);
+        #654=PRODUCT_DEFINITION_SHAPE('',$,#504);
+        #655=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#653,#654);
+
         ENDSEC;
         END-ISO-10303-21;
         """;
@@ -158,5 +200,91 @@ public sealed class StepAssemblyStructureReaderTests
         var structure = new StepAssemblyStructureReader(reader).Read();
 
         structure.Warnings.Should().BeEmpty();
+    }
+
+    // ── Occurrence position resolution ──────────────────────────────────────────────────────
+
+    private static bool ContainsPosition(IReadOnlyList<double[]> positions, double x, double y, double z)
+        => positions.Any(p => Math.Abs(p[0] - x) < 1e-9 && Math.Abs(p[1] - y) < 1e-9 && Math.Abs(p[2] - z) < 1e-9);
+
+    [Fact]
+    public void Read_ResolvesGlobalPosition_ForEveryOccurrence_IncludingMultiInstance()
+    {
+        // PART-A has THREE occurrences (1 direct under ROOT + 1 per SUBASM instance ×2). The old
+        // code resolved a placement only for single-instance products, so this multi-instance
+        // part got nothing — this is the core "misses most instances" bug being fixed. Positions
+        // are in metres (fixture points are mm, scaled ×1e-3):
+        //   • ROOT→PART-A (#502, +200mm X)                     → (0.2,  0,    0)
+        //   • ROOT→SUBASM#1 (+100mm X) → PART-A (#503, +10mm X) → (0.11, 0,    0)
+        //   • ROOT→SUBASM#2 (rot 90° Z) → PART-A (#503, +10mm X)→ (0,    0.01, 0)   ← rotation-composed
+        var reader = StepP21Reader.ParseText(SyntheticAssembly);
+        var structure = new StepAssemblyStructureReader(reader).Read();
+
+        var partA = structure.Components.Single(c => c.MatchKey == "PART-A");
+        partA.OccurrencePositionsM.Should().HaveCount(3);
+        ContainsPosition(partA.OccurrencePositionsM, 0.2, 0.0, 0.0).Should().BeTrue();
+        ContainsPosition(partA.OccurrencePositionsM, 0.11, 0.0, 0.0).Should().BeTrue();
+
+        // The third occurrence sits under a SUBASM instance rotated 90° about Z, so PART-A's
+        // local +10mm X offset composes to +10mm along the ROOT Y axis → (0, 0.01, 0). A
+        // translation-only composition (ignoring the parent rotation) would instead place it at
+        // (0.01, 0, 0) — so asserting the rotated value present AND the un-rotated value absent
+        // pins down that rotation-aware composition is actually happening.
+        ContainsPosition(partA.OccurrencePositionsM, 0.0, 0.01, 0.0).Should().BeTrue();
+        ContainsPosition(partA.OccurrencePositionsM, 0.01, 0.0, 0.0).Should().BeFalse();
+    }
+
+    [Fact]
+    public void Read_OccurrenceCount_MatchesInstanceCount()
+    {
+        var reader = StepP21Reader.ParseText(SyntheticAssembly);
+        var structure = new StepAssemblyStructureReader(reader).Read();
+
+        foreach (var c in structure.Components)
+            c.OccurrencePositionsM.Should().HaveCount(c.InstanceCount!.Value,
+                $"every counted instance of '{c.MatchKey}' should get exactly one resolved position");
+    }
+
+    [Fact]
+    public void Read_NestedSubAssemblyShift_ChangesGlobalPosition_WhereParentRelativeWouldNot()
+    {
+        // Between two revisions, only SUBASM instance #2's own placement moves (its target point
+        // #620 shifts +50mm in Z). The SUBASM→PART-A hop (#503) is byte-identical in both — so a
+        // comparison that only looked at the child's own immediate (parent-relative) transform
+        // would see no change. But PART-A's occurrence under that SUBASM instance moves in the
+        // global frame, which the composed position captures.
+        var fixtureB = SyntheticAssembly.Replace(
+            "#620=CARTESIAN_POINT('',(0.,0.,0.));",
+            "#620=CARTESIAN_POINT('',(0.,0.,50.));");
+
+        var a = new StepAssemblyStructureReader(StepP21Reader.ParseText(SyntheticAssembly)).Read()
+            .Components.Single(c => c.MatchKey == "PART-A");
+        var b = new StepAssemblyStructureReader(StepP21Reader.ParseText(fixtureB)).Read()
+            .Components.Single(c => c.MatchKey == "PART-A");
+
+        // Global set differs (the rotation-composed occurrence moved from z=0 to z=0.05)...
+        ContainsPosition(a.OccurrencePositionsM, 0.0, 0.01, 0.0).Should().BeTrue();
+        ContainsPosition(b.OccurrencePositionsM, 0.0, 0.01, 0.05).Should().BeTrue();
+        // ...and the position comparer flags it as moved.
+        OccurrencePositionComparer.PositionChanged(a.OccurrencePositionsM, b.OccurrencePositionsM, 0.0005)
+            .Should().BeTrue();
+    }
+
+    [Fact]
+    public void Read_UnresolvableTransformChain_DegradesToIdentity_WithWarning_NeverDropsOccurrence()
+    {
+        // Break the ROOT→PART-A direct hop by removing its CONTEXT_DEPENDENT_SHAPE_REPRESENTATION.
+        var broken = SyntheticAssembly.Replace(
+            "#635=CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#633,#634);", "");
+
+        var structure = new StepAssemblyStructureReader(StepP21Reader.ParseText(broken)).Read();
+        var partA = structure.Components.Single(c => c.MatchKey == "PART-A");
+
+        // The occurrence is not dropped — still 3 — but the unresolved hop falls back to identity,
+        // so PART-A's direct occurrence now sits at the origin instead of (0.2, 0, 0).
+        partA.OccurrencePositionsM.Should().HaveCount(3);
+        ContainsPosition(partA.OccurrencePositionsM, 0.0, 0.0, 0.0).Should().BeTrue();
+        ContainsPosition(partA.OccurrencePositionsM, 0.2, 0.0, 0.0).Should().BeFalse();
+        structure.Warnings.Should().Contain(w => w.Contains("could not be resolved"));
     }
 }

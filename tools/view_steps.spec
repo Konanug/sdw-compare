@@ -1,9 +1,12 @@
-# PyInstaller spec for the standalone STEP viewer.
+# PyInstaller spec for the bundled Python tools: the 3D STEP viewer (view_steps.exe) AND the
+# real-volume computer (compute_component_volume.exe). Both build into one shared bundle
+# (tools/dist/view_steps/) — the volume tool's dependencies (build123d/OCP) are a strict subset
+# of the viewer's, so a second bundle would just duplicate ~500 MB.
 # Run via:  tools\build_viewer.ps1
 #
-# console=True keeps sys.stdout wired so C# can read the PYVISTA_READY signal
-# via redirected stdout.  C# launches the process with CreateNoWindow=true,
-# so no terminal window is visible to end users.
+# console=True keeps each tool's stdout wired so the C# host can read it (the viewer's
+# PYVISTA_READY signal; the volume tool's JSON result). C# launches both with
+# CreateNoWindow=true, so no terminal window is visible to end users.
 
 import os, site
 from PyInstaller.utils.hooks import collect_all, collect_data_files
@@ -65,7 +68,24 @@ a = Analysis(
     noarchive=False,
 )
 
-pyz = PYZ(a.pure)
+# The volume tool needs only OCP/build123d (no pyvista/vtk), but sharing the single COLLECT
+# below de-duplicates everything anyway.
+a2 = Analysis(
+    ["compute_component_volume.py"],
+    pathex=[],
+    binaries=_b_ocp + _b_b3d + _b_l3m + _b_svg + _b_gor + _b_prx,
+    datas=_d_ocp + _d_b3d + _d_l3m + _d_svg + _d_gor + _d_prx + _extra_datas,
+    hiddenimports=_h_ocp + _h_b3d + _h_l3m + _h_svg + _h_gor + _h_prx,
+    hookspath=[],
+    runtime_hooks=[],
+    excludes=["tkinter"],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    noarchive=False,
+)
+
+pyz  = PYZ(a.pure)
+pyz2 = PYZ(a2.pure)
 
 exe = EXE(
     pyz,
@@ -81,11 +101,29 @@ exe = EXE(
     argv_emulation=False,
 )
 
+exe2 = EXE(
+    pyz2,
+    a2.scripts,
+    [],
+    exclude_binaries=True,
+    name="compute_component_volume",
+    debug=False,
+    strip=False,
+    upx=False,
+    console=True,  # stdout carries the JSON volume result to the C# host
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+)
+
 coll = COLLECT(
     exe,
+    exe2,
     a.binaries,
     a.zipfiles,
     a.datas,
+    a2.binaries,
+    a2.zipfiles,
+    a2.datas,
     strip=False,
     upx=False,
     name="view_steps",

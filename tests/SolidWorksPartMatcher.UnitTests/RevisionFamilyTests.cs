@@ -37,8 +37,8 @@ public sealed class RevisionFamilyTests
     public void RevisionFamilyPair_SoftJoins_IntoSameCluster()
     {
         var runId = Guid.NewGuid();
-        var fpA   = MakeFp("sha1");
-        var fpB   = MakeFp("sha2");
+        var fpA = MakeFp("sha1");
+        var fpB = MakeFp("sha2");
 
         var pair = new CandidatePair(
             Id: Guid.NewGuid(),
@@ -67,8 +67,8 @@ public sealed class RevisionFamilyTests
     public void ExactMatchInCluster_TakesPriorityOver_RevisionFamily()
     {
         var runId = Guid.NewGuid();
-        var fpA   = MakeFp("sha1");
-        var fpB   = MakeFp("sha2");
+        var fpA = MakeFp("sha1");
+        var fpB = MakeFp("sha2");
 
         var pair = new CandidatePair(
             Id: Guid.NewGuid(),
@@ -98,8 +98,8 @@ public sealed class RevisionFamilyTests
         // can see and adjudicate them in the UI.  The cluster is classified as
         // PossibleMatch (not ExactGeometryMatch) and flagged NeedsReview.
         var runId = Guid.NewGuid();
-        var fpA   = MakeFp("sha1");
-        var fpB   = MakeFp("sha2");
+        var fpA = MakeFp("sha1");
+        var fpB = MakeFp("sha2");
 
         var pair = new CandidatePair(
             Id: Guid.NewGuid(),

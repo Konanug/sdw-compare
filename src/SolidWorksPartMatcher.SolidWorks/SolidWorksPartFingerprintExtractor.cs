@@ -35,7 +35,7 @@ public sealed class SolidWorksPartFingerprintExtractor : IPartFingerprintExtract
 
     // swFeatureSuppressionState_e: 0 = fully unsuppressed, 2 = suppressed
     private const int SwUnsuppressed = 0;
-    private const int SwSuppressed   = 2;
+    private const int SwSuppressed = 2;
 
     // swInConfigurationOpts_e: 1 = this configuration only
     private const int SwThisConfig = 1;
@@ -180,12 +180,12 @@ public sealed class SolidWorksPartFingerprintExtractor : IPartFingerprintExtract
 
         // Suppress engraving features, rebuild, and capture base-part geometry.
         int? suppSolidCount = null;
-        double[]? suppBB    = null;
-        double? suppVol     = null;
-        double? suppSA      = null;
-        int? suppFace       = null;
-        int? suppEdge       = null;
-        int? suppVert       = null;
+        double[]? suppBB = null;
+        double? suppVol = null;
+        double? suppSA = null;
+        int? suppFace = null;
+        int? suppEdge = null;
+        int? suppVert = null;
 
         if (suppressionCandidates.Count > 0)
         {

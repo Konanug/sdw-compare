@@ -8,23 +8,23 @@ public sealed class WeightedCandidateScorer : ICandidateScorer
 {
     public double Score(PartFingerprint a, PartFingerprint b, ScoringWeights w)
     {
-        var bbSim   = BoundingBoxSimilarity(EffectiveBB(a), EffectiveBB(b));
-        var volSim  = ScalarSimilarity(EffectiveVolume(a), EffectiveVolume(b));
-        var saSim   = ScalarSimilarity(EffectiveSA(a), EffectiveSA(b));
+        var bbSim = BoundingBoxSimilarity(EffectiveBB(a), EffectiveBB(b));
+        var volSim = ScalarSimilarity(EffectiveVolume(a), EffectiveVolume(b));
+        var saSim = ScalarSimilarity(EffectiveSA(a), EffectiveSA(b));
         var topoSim = TopologySimilarity(a, b);
         var featSim = FeatureHistogramSimilarity(a.FeatureTypeHistogram, b.FeatureTypeHistogram);
-        var matSim  = MaterialSimilarity(a.Material, b.Material);
+        var matSim = MaterialSimilarity(a.Material, b.Material);
         var propSim = CustomPropertiesSimilarity(a.CustomProperties, b.CustomProperties);
         var nameSim = FilenameSimilarity(a.ConfigName, b.ConfigName);
 
-        return w.BoundingBox       * bbSim
-             + w.Volume            * volSim
-             + w.SurfaceArea       * saSim
-             + w.Topology          * topoSim
-             + w.FeatureHistogram  * featSim
+        return w.BoundingBox * bbSim
+             + w.Volume * volSim
+             + w.SurfaceArea * saSim
+             + w.Topology * topoSim
+             + w.FeatureHistogram * featSim
              + w.MaterialProperties * matSim
-             + w.CustomProperties  * propSim
-             + w.FilenameTokens    * nameSim;
+             + w.CustomProperties * propSim
+             + w.FilenameTokens * nameSim;
     }
 
     // Features whose linear dimensions differ by this amount or less are treated as

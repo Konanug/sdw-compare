@@ -11,9 +11,9 @@ public sealed class StepGeometryEstimatorTests
     {
         var corners = new List<double[]>();
         foreach (var sx in new[] { -1.0, 1.0 })
-        foreach (var sy in new[] { -1.0, 1.0 })
-        foreach (var sz in new[] { -1.0, 1.0 })
-            corners.Add([sx * hx, sy * hy, sz * hz]);
+            foreach (var sy in new[] { -1.0, 1.0 })
+                foreach (var sz in new[] { -1.0, 1.0 })
+                    corners.Add([sx * hx, sy * hy, sz * hz]);
         return corners;
     }
 

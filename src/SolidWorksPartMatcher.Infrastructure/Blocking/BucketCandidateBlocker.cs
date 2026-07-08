@@ -81,12 +81,12 @@ public sealed class BucketCandidateBlocker : ICandidateBlocker
 
         // Neighboring buckets — offset each dimension by ±1 to prevent boundary misses
         for (var dx = -1; dx <= 1; dx++)
-        for (var dy = -1; dy <= 1; dy++)
-        for (var dz = -1; dz <= 1; dz++)
-        {
-            if (dx == 0 && dy == 0 && dz == 0) continue;
-            yield return $"bc={bc}|bb={bx+dx},{by+dy},{bz+dz}|vol={vol}";
-        }
+            for (var dy = -1; dy <= 1; dy++)
+                for (var dz = -1; dz <= 1; dz++)
+                {
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
+                    yield return $"bc={bc}|bb={bx + dx},{by + dy},{bz + dz}|vol={vol}";
+                }
 
         // Volume-only bucket as fallback
         yield return $"bc={bc}|vol={vol}|sa={sa}";

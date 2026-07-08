@@ -21,7 +21,13 @@ public sealed record AssemblyDiffTolerances(
     // removed: once a rename candidate clears this similarity bar, there's no more reliable way
     // to second-guess it by size alone than for any other pair — a confirmed rename with a big
     // volume delta is just a big revision, not grounds for suspicion.)
-    double SuspiciousMatchThreshold = 0.35)
+    double SuspiciousMatchThreshold = 0.35,
+    // Two occurrence positions count as "the same place" when within this many metres of each
+    // other. An instance is considered moved only if it has no counterpart position within this
+    // distance on the other side (see OccurrencePositionComparer). Uncalibrated starting point,
+    // to be tuned against real files — wider than a bit-exact match to absorb STEP export
+    // rounding, tighter than any real relocation.
+    double PositionChangeMetersThreshold = 0.0005)
 {
     public static readonly AssemblyDiffTolerances Default = new();
 }

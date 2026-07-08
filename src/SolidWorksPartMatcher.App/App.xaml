@@ -15,6 +15,55 @@
                  without a dedicated converter: just check IsRunning=True → Disabled.
                  A real converter is below for cases where a property is needed. -->
 
+            <!-- ── Loading bar ────────────────────────────────────────────────
+                 The classic moving/filling indeterminate style, but in one uniform
+                 colour: a solid blue (#1E88E5) fill sweeps left→right across a light
+                 same-hue track (no two-tone glass indicator). Width-adaptive (scale
+                 based) so it looks right in any window size. -->
+            <Style x:Key="BlueLoadingBar" TargetType="ProgressBar">
+                <Setter Property="Foreground" Value="#1E88E5"/>
+                <Setter Property="Background" Value="#D6E4F0"/>
+                <Setter Property="Height" Value="6"/>
+                <Setter Property="IsIndeterminate" Value="True"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ProgressBar">
+                            <Grid ClipToBounds="True">
+                                <Border CornerRadius="3" Background="{TemplateBinding Background}"/>
+                                <Border x:Name="Fill" CornerRadius="3"
+                                        Background="{TemplateBinding Foreground}"
+                                        HorizontalAlignment="Stretch" RenderTransformOrigin="0,0.5">
+                                    <Border.RenderTransform>
+                                        <ScaleTransform x:Name="FillScale" ScaleX="0"/>
+                                    </Border.RenderTransform>
+                                </Border>
+                            </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsIndeterminate" Value="True">
+                                    <Trigger.EnterActions>
+                                        <BeginStoryboard Name="Fill_SB">
+                                            <Storyboard>
+                                                <DoubleAnimationUsingKeyFrames
+                                                        Storyboard.TargetName="FillScale"
+                                                        Storyboard.TargetProperty="ScaleX"
+                                                        RepeatBehavior="Forever">
+                                                    <LinearDoubleKeyFrame   KeyTime="0:0:0"   Value="0"/>
+                                                    <LinearDoubleKeyFrame   KeyTime="0:0:1.1" Value="1"/>
+                                                    <DiscreteDoubleKeyFrame KeyTime="0:0:1.4" Value="0"/>
+                                                </DoubleAnimationUsingKeyFrames>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.EnterActions>
+                                    <Trigger.ExitActions>
+                                        <StopStoryboard BeginStoryboardName="Fill_SB"/>
+                                    </Trigger.ExitActions>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- ── Global control styles ──────────────────────────────────── -->
             <Style TargetType="TextBlock">
                 <Setter Property="FontFamily" Value="Segoe UI"/>

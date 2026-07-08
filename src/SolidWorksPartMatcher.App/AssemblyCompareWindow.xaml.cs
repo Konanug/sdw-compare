@@ -40,7 +40,7 @@ public partial class AssemblyCompareWindow : Window
     {
         var dlg = new Microsoft.Win32.OpenFileDialog
         {
-            Title  = title,
+            Title = title,
             Filter = FileFilter
         };
         return dlg.ShowDialog() == true ? dlg.FileName : null;
@@ -61,6 +61,7 @@ public partial class AssemblyCompareWindow : Window
         }
 
         CompareButton.IsEnabled = false;
+        LoadingBar.Visibility = Visibility.Visible;
         StatusText.Foreground = System.Windows.Media.Brushes.Gray;
         StatusText.Text = "Parsing and comparing assemblies…";
 
@@ -85,6 +86,7 @@ public partial class AssemblyCompareWindow : Window
         }
         finally
         {
+            LoadingBar.Visibility = Visibility.Collapsed;
             CompareButton.IsEnabled = true;
         }
     }
