@@ -43,6 +43,14 @@ public sealed partial class MainViewModel : ObservableObject
         ExportVisibleCommand.NotifyCanExecuteChanged();
     }
 
+    partial void OnIsScanningChanged(bool value)
+    {
+        // Folder editing is disabled while a scan is running, re-enabled when it finishes.
+        AddFolderCommand.NotifyCanExecuteChanged();
+        RemoveFolderCommand.NotifyCanExecuteChanged();
+        RemoveAllFoldersCommand.NotifyCanExecuteChanged();
+    }
+
     private CancellationTokenSource? _cts;
     private ScanRun? _lastRun;
     private bool _hasScanned;
@@ -187,7 +195,7 @@ public sealed partial class MainViewModel : ObservableObject
     // Folder commands
     // ──────────────────────────────────────────────────────────────────────────
 
-    [RelayCommand]
+    [RelayCommand(CanExecute = nameof(CanEditFolders))]
     private void AddFolder()
     {
         var dialog = new System.Windows.Forms.FolderBrowserDialog
@@ -195,12 +203,40 @@ public sealed partial class MainViewModel : ObservableObject
             Description = "Select a folder containing .SLDPRT or .STEP/.STP files",
             UseDescriptionForTitle = true
         };
-        if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
+        if (dialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+            return;
+
+        if (!FolderPaths.Contains(dialog.SelectedPath))
             FolderPaths.Add(dialog.SelectedPath);
+
+        // The folder set changed, so any results from a previous scan no longer match it.
+        if (_hasScanned)
+            InvalidateResults("Folders changed — click Start Scan to refresh results.");
     }
 
-    [RelayCommand]
-    private void RemoveFolder(string path) => FolderPaths.Remove(path);
+    [RelayCommand(CanExecute = nameof(CanEditFolders))]
+    private void RemoveFolder(string? path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return;
+
+        FolderPaths.Remove(path);
+
+        // Removing a folder invalidates results that were scanned from it — clear them so the
+        // view reflects the current folder set rather than leaving stale parts on screen.
+        if (_hasScanned)
+            InvalidateResults("Folders changed — click Start Scan to refresh results.");
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditFolders))]
+    private void RemoveAllFolders()
+    {
+        FolderPaths.Clear();
+        InvalidateResults("Add folders and click Start Scan.");
+    }
+
+    // Folders may be edited any time except while a scan is actively running.
+    private bool CanEditFolders() => !IsScanning;
 
     // ──────────────────────────────────────────────────────────────────────────
     // Scan command
@@ -355,13 +391,22 @@ public sealed partial class MainViewModel : ObservableObject
     {
         _searchDebounce.Stop();
         SearchText = "";
-        _searchDebounce.Stop();
         SelectedClassificationOption = ClassificationOptions[0];
         SelectedReviewStatusOption = ReviewStatusOptions[0];
         ClassificationFilter = null;
         ReviewStatusFilter = null;
 
         // Clear all loaded scan data — returns to fresh-open state.
+        InvalidateResults("Add folders and click Start Scan.");
+    }
+
+    /// <summary>
+    /// Discards the currently loaded scan results and returns to the pre-scan state, updating the
+    /// status text. Used when the user clears filters, or when the folder set changes after a scan
+    /// (which makes the displayed results stale). Does not touch <see cref="FolderPaths"/>.
+    /// </summary>
+    private void InvalidateResults(string status)
+    {
         _groups.Clear();
         _lastClusters = [];
         _lastFiles = [];
@@ -371,8 +416,8 @@ public sealed partial class MainViewModel : ObservableObject
         _lastRun = null;
         _hasScanned = false;
         CanExport = false;
-        StatusText = "Add folders and click Start Scan.";
         ScanStage = "";
+        StatusText = status;
 
         RefreshFilter();
         OnPropertyChanged(nameof(ShowNoScanState));
