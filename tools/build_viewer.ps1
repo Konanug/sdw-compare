@@ -14,13 +14,16 @@
     VTK, pyvista, and build123d/OCP — end users need nothing installed.
 #>
 
-$ErrorActionPreference = "Stop"
+# Continue (not Stop): native tools like pip/PyInstaller routinely write progress and upgrade
+# notices to stderr, which under "Stop" PowerShell wraps as a terminating NativeCommandError even
+# on a successful (exit 0) run. We gate on $LASTEXITCODE explicitly and `throw` on real failures.
+$ErrorActionPreference = "Continue"
 
 $toolsDir = $PSScriptRoot   # this script lives in tools/
 $specFile  = Join-Path $toolsDir "view_steps.spec"
 
 if (-not (Test-Path $specFile)) {
-    Write-Error "Spec file not found: $specFile"
+    throw "Spec file not found: $specFile"
 }
 
 Push-Location $toolsDir
@@ -29,7 +32,7 @@ try {
     Write-Host ""
     Write-Host "=== Step 1: ensure PyInstaller is installed ===" -ForegroundColor Cyan
     python -m pip install "pyinstaller>=6.0" --quiet
-    if ($LASTEXITCODE -ne 0) { Write-Error "pip install pyinstaller failed" }
+    if ($LASTEXITCODE -ne 0) { throw "pip install pyinstaller failed (exit $LASTEXITCODE)" }
 
     # ── Clean previous build artefacts ───────────────────────────────────────
     Write-Host ""
@@ -45,7 +48,7 @@ try {
     Write-Host ""
     Write-Host "=== Step 3: PyInstaller build (this takes several minutes) ===" -ForegroundColor Cyan
     python -m PyInstaller view_steps.spec -y
-    if ($LASTEXITCODE -ne 0) { Write-Error "PyInstaller failed (exit $LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 
     # ── Verify output ─────────────────────────────────────────────────────────
     # The one bundle carries BOTH tools (they share the Python/OCP runtime): the 3D viewer and
@@ -53,7 +56,7 @@ try {
     foreach ($exeName in @("view_steps.exe", "compute_component_volume.exe")) {
         $exePath = Join-Path $toolsDir "dist\view_steps\$exeName"
         if (-not (Test-Path $exePath)) {
-            Write-Error "Build succeeded but expected exe not found: $exePath"
+            throw "Build succeeded but expected exe not found: $exePath"
         }
     }
 
