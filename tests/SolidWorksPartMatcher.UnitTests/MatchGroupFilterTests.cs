@@ -10,14 +10,14 @@ public sealed class MatchGroupFilterTests
     // ── Label mapping ────────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData(PartClassification.BinaryDuplicate,              "Geometry Match (Identical Copy)")]
-    [InlineData(PartClassification.ExactGeometryMatch,           "Geometry Match")]
+    [InlineData(PartClassification.BinaryDuplicate, "Geometry Match (Identical Copy)")]
+    [InlineData(PartClassification.ExactGeometryMatch, "Geometry Match")]
     [InlineData(PartClassification.GeometryMatchMetadataVariant, "Geometry Match (Metadata Variant)")]
-    [InlineData(PartClassification.MirrorOrHandedVariant,        "Geometry Match (Mirror Variant)")]
-    [InlineData(PartClassification.RevisionFamily,               "Geometry Match (Revision Family)")]
-    [InlineData(PartClassification.PossibleMatch,                "Possible Match")]
-    [InlineData(PartClassification.Distinct,                     "Distinct")]
-    [InlineData(PartClassification.ComparisonFailed,             "Comparison Failed")]
+    [InlineData(PartClassification.MirrorOrHandedVariant, "Geometry Match (Mirror Variant)")]
+    [InlineData(PartClassification.RevisionFamily, "Geometry Match (Revision Family)")]
+    [InlineData(PartClassification.PossibleMatch, "Possible Match")]
+    [InlineData(PartClassification.Distinct, "Distinct")]
+    [InlineData(PartClassification.ComparisonFailed, "Comparison Failed")]
     public void ToLabel_ReturnsHumanReadableString(PartClassification cls, string expected)
         => MatchGroupFilter.ToLabel(cls).Should().Be(expected);
 
@@ -65,7 +65,7 @@ public sealed class MatchGroupFilterTests
             MakeCluster("Beta"),
             MakeCluster("Alpha"),
         };
-        var first  = MatchGroupFilter.BuildDisplayNames(clusters);
+        var first = MatchGroupFilter.BuildDisplayNames(clusters);
         var second = MatchGroupFilter.BuildDisplayNames(clusters);
 
         first.Should().BeEquivalentTo(second, o => o.WithStrictOrdering());

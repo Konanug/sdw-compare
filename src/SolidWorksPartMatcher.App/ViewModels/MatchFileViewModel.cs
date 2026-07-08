@@ -22,14 +22,14 @@ public sealed partial class MatchFileViewModel : ObservableObject
         !string.IsNullOrEmpty(ConfigurationName) &&
         !string.Equals(ConfigurationName, "Default", StringComparison.OrdinalIgnoreCase);
 
-    public string OpenButtonLabel         => IsStepFile ? "Open File" : "Open in SOLIDWORKS";
-    public string OpenSwAutomationName    => IsStepFile ? $"Open {FileName}" : $"Open {FileName} in SOLIDWORKS";
+    public string OpenButtonLabel => IsStepFile ? "Open File" : "Open in SOLIDWORKS";
+    public string OpenSwAutomationName => IsStepFile ? $"Open {FileName}" : $"Open {FileName} in SOLIDWORKS";
     public string OpenFolderAutomationName => $"Open folder containing {FileName}";
 
     [ObservableProperty] private string? _openError;
 
     public IAsyncRelayCommand OpenInSolidWorksCommand { get; }
-    public IRelayCommand       OpenFolderCommand      { get; }
+    public IRelayCommand OpenFolderCommand { get; }
 
     private readonly ISolidWorksFileOpener _opener;
     private readonly ILogger<MatchFileViewModel> _logger;
@@ -42,16 +42,16 @@ public sealed partial class MatchFileViewModel : ObservableObject
         ISolidWorksFileOpener opener,
         ILogger<MatchFileViewModel> logger)
     {
-        ScannedFileId     = scannedFileId;
-        FullPath          = fullPath;
-        FileName          = Path.GetFileName(fullPath);
+        ScannedFileId = scannedFileId;
+        FullPath = fullPath;
+        FileName = Path.GetFileName(fullPath);
         ConfigurationName = configurationName;
-        SourceFormat      = sourceFormat;
-        _opener           = opener;
-        _logger           = logger;
+        SourceFormat = sourceFormat;
+        _opener = opener;
+        _logger = logger;
 
         OpenInSolidWorksCommand = new AsyncRelayCommand(DoOpenInSolidWorksAsync);
-        OpenFolderCommand       = new RelayCommand(DoOpenFolder);
+        OpenFolderCommand = new RelayCommand(DoOpenFolder);
     }
 
     /// <summary>Called from OpenAllCommand in the parent group.</summary>

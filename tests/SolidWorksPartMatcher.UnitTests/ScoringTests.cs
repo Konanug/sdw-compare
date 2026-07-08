@@ -83,20 +83,20 @@ public sealed class ScoringTests
 
     [Theory]
     // Fraction vs equivalent decimal (rounded to 2 dp)
-    [InlineData("1/7",     "0.14",     true)]   // 1/7 ≈ 0.142857 → "0.14"
-    [InlineData("6/8",     "0.75",     true)]   // 6/8 = 0.75 → "0.75"
-    [InlineData("3/8",     "0.375",    true)]   // 3/8 = 0.375 → "0.38"; "0.375" → "0.38" → equal
-    [InlineData("3/8",     "0.38",     true)]   // 0.38 → "0.38"
+    [InlineData("1/7", "0.14", true)]   // 1/7 ≈ 0.142857 → "0.14"
+    [InlineData("6/8", "0.75", true)]   // 6/8 = 0.75 → "0.75"
+    [InlineData("3/8", "0.375", true)]   // 3/8 = 0.375 → "0.38"; "0.375" → "0.38" → equal
+    [InlineData("3/8", "0.38", true)]   // 0.38 → "0.38"
     // Decimals that round to the same 2dp
-    [InlineData("0.55",    "0.553231", true)]   // both → "0.55"
-    [InlineData("0.14",    "0.142857", true)]   // both → "0.14"
+    [InlineData("0.55", "0.553231", true)]   // both → "0.55"
+    [InlineData("0.14", "0.142857", true)]   // both → "0.14"
     // Distinct at 2dp
-    [InlineData("0.14",    "0.15",     false)]  // "0.14" ≠ "0.15"
-    [InlineData("0.55",    "0.56",     false)]
+    [InlineData("0.14", "0.15", false)]  // "0.14" ≠ "0.15"
+    [InlineData("0.55", "0.56", false)]
     // String equality fallback
-    [InlineData("Rev A",   "Rev A",    true)]
-    [InlineData("Rev A",   "rev a",    true)]   // case-insensitive
-    [InlineData("Rev A",   "Rev B",    false)]
+    [InlineData("Rev A", "Rev A", true)]
+    [InlineData("Rev A", "rev a", true)]   // case-insensitive
+    [InlineData("Rev A", "Rev B", false)]
     public void AreEquivalentPropertyValues_Correct(string a, string b, bool expected)
     {
         WeightedCandidateScorer.AreEquivalentPropertyValues(a, b)
@@ -140,8 +140,8 @@ public sealed class ScoringTests
         var a = MakeFp(bb: [0.050, 0.100, 0.200]);
         var b = MakeFp(bb: [0.051, 0.101, 0.201]); // +1 mm each
 
-        var scoreWithTolerance    = _scorer.Score(a, b, ScoringWeights.Default);
-        var scoreIdentical        = _scorer.Score(a, a, ScoringWeights.Default);
+        var scoreWithTolerance = _scorer.Score(a, b, ScoringWeights.Default);
+        var scoreIdentical = _scorer.Score(a, a, ScoringWeights.Default);
 
         scoreWithTolerance.Should().BeLessThan(scoreIdentical);
     }
@@ -155,12 +155,12 @@ public sealed class ScoringTests
     // ── MeasurementParser ────────────────────────────────────────────────────
 
     [Theory]
-    [InlineData("1/7",     1.0 / 7.0)]
-    [InlineData("6/8",     6.0 / 8.0)]
-    [InlineData("3/8",     3.0 / 8.0)]
-    [InlineData("0.55",    0.55)]
-    [InlineData("0.553231",0.553231)]
-    [InlineData("5",       5.0)]
+    [InlineData("1/7", 1.0 / 7.0)]
+    [InlineData("6/8", 6.0 / 8.0)]
+    [InlineData("3/8", 3.0 / 8.0)]
+    [InlineData("0.55", 0.55)]
+    [InlineData("0.553231", 0.553231)]
+    [InlineData("5", 5.0)]
     public void MeasurementParser_ParsesCorrectly(string input, double expected)
     {
         var ok = MeasurementParser.TryParseNumber(input, out var result);
@@ -179,10 +179,10 @@ public sealed class ScoringTests
     }
 
     [Theory]
-    [InlineData(1.0 / 7.0,   "0.14")]
-    [InlineData(6.0 / 8.0,   "0.75")]
-    [InlineData(0.553231,     "0.55")]
-    [InlineData(0.55,         "0.55")]
+    [InlineData(1.0 / 7.0, "0.14")]
+    [InlineData(6.0 / 8.0, "0.75")]
+    [InlineData(0.553231, "0.55")]
+    [InlineData(0.55, "0.55")]
     public void MeasurementParser_FormatDisplay_TwoDecimalPlaces(double value, string expected)
     {
         MeasurementParser.FormatDisplay(value).Should().Be(expected);
@@ -192,7 +192,7 @@ public sealed class ScoringTests
     public void MeasurementParser_FullPrecisionPreserved_WhileDisplayRounds()
     {
         // 0.55 and 0.553231 display the same but are not numerically equal.
-        MeasurementParser.TryParseNumber("0.55",     out var v1);
+        MeasurementParser.TryParseNumber("0.55", out var v1);
         MeasurementParser.TryParseNumber("0.553231", out var v2);
 
         // Full-precision values differ
@@ -206,13 +206,13 @@ public sealed class ScoringTests
     // ── MeasurementParser.TryParseToMm ──────────────────────────────────────
 
     [Theory]
-    [InlineData("0.5in",    MeasurementParser.LengthUnit.Inch,        0.5  * 25.4)]
-    [InlineData("3/8in",    MeasurementParser.LengthUnit.Inch,        0.375 * 25.4)]
-    [InlineData("1.500in",  MeasurementParser.LengthUnit.Inch,        1.5  * 25.4)]
-    [InlineData("0.5 in",   MeasurementParser.LengthUnit.Inch,        0.5  * 25.4)]   // space before suffix
-    [InlineData("0.5IN",    MeasurementParser.LengthUnit.Inch,        0.5  * 25.4)]   // uppercase
-    [InlineData("12.7mm",   MeasurementParser.LengthUnit.Millimetre,  12.7)]
-    [InlineData("0.5",      MeasurementParser.LengthUnit.Unknown,      0.5)]           // no suffix → raw value
+    [InlineData("0.5in", MeasurementParser.LengthUnit.Inch, 0.5 * 25.4)]
+    [InlineData("3/8in", MeasurementParser.LengthUnit.Inch, 0.375 * 25.4)]
+    [InlineData("1.500in", MeasurementParser.LengthUnit.Inch, 1.5 * 25.4)]
+    [InlineData("0.5 in", MeasurementParser.LengthUnit.Inch, 0.5 * 25.4)]   // space before suffix
+    [InlineData("0.5IN", MeasurementParser.LengthUnit.Inch, 0.5 * 25.4)]   // uppercase
+    [InlineData("12.7mm", MeasurementParser.LengthUnit.Millimetre, 12.7)]
+    [InlineData("0.5", MeasurementParser.LengthUnit.Unknown, 0.5)]           // no suffix → raw value
     public void TryParseToMm_ParsesCorrectly(string input, MeasurementParser.LengthUnit expectedUnit, double expectedMm)
     {
         var ok = MeasurementParser.TryParseToMm(input, out var mm, out var unit);
@@ -234,24 +234,24 @@ public sealed class ScoringTests
 
     [Theory]
     // Same inch values
-    [InlineData("0.5in",   "0.5in",   true)]
-    [InlineData("0.50in",  "0.5in",   true)]   // trailing zero
+    [InlineData("0.5in", "0.5in", true)]
+    [InlineData("0.50in", "0.5in", true)]   // trailing zero
     // Fraction/decimal equivalence in inches (|diff_mm| ≤ 0.5)
-    [InlineData("3/8in",   "0.38in",  true)]   // |9.525 - 9.652| = 0.127 mm
+    [InlineData("3/8in", "0.38in", true)]   // |9.525 - 9.652| = 0.127 mm
     // 0.5 mm boundary in inches
     [InlineData("1.500in", "1.519in", true)]   // |38.100 - 38.583| ≈ 0.483 mm ≤ 0.5
     [InlineData("1.500in", "1.520in", false)]  // |38.100 - 38.608| ≈ 0.508 mm > 0.5
     // Cross-unit: same physical dimension
-    [InlineData("0.5in",   "12.7mm",  true)]   // 0.5 × 25.4 = 12.7 mm
-    [InlineData("1.0in",   "25.4mm",  true)]
+    [InlineData("0.5in", "12.7mm", true)]   // 0.5 × 25.4 = 12.7 mm
+    [InlineData("1.0in", "25.4mm", true)]
     // Different inch values outside tolerance
-    [InlineData("1.0in",   "2.0in",   false)]
+    [InlineData("1.0in", "2.0in", false)]
     // Mixed: one side has "in" suffix, other is a bare decimal — the unit is inherited
-    [InlineData("3/8in",   "0.375",   true)]   // exact: 9.525 mm == 9.525 mm
-    [InlineData("3/8in",   "0.38",    true)]   // |9.525 - 9.652| = 0.127 mm ≤ 0.5
-    [InlineData("0.5in",   "0.5",     true)]   // 12.7 mm == 12.7 mm
-    [InlineData("1.500in", "1.519",   true)]   // |38.100 - 38.583| ≈ 0.483 mm ≤ 0.5
-    [InlineData("1.500in", "1.520",   false)]  // |38.100 - 38.608| ≈ 0.508 mm > 0.5
+    [InlineData("3/8in", "0.375", true)]   // exact: 9.525 mm == 9.525 mm
+    [InlineData("3/8in", "0.38", true)]   // |9.525 - 9.652| = 0.127 mm ≤ 0.5
+    [InlineData("0.5in", "0.5", true)]   // 12.7 mm == 12.7 mm
+    [InlineData("1.500in", "1.519", true)]   // |38.100 - 38.583| ≈ 0.483 mm ≤ 0.5
+    [InlineData("1.500in", "1.520", false)]  // |38.100 - 38.608| ≈ 0.508 mm > 0.5
     public void AreEquivalentPropertyValues_InchSuffix_Correct(string a, string b, bool expected)
     {
         WeightedCandidateScorer.AreEquivalentPropertyValues(a, b)

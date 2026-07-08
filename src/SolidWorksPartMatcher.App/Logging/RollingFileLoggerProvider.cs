@@ -47,8 +47,8 @@ public sealed class RollingFileLoggerProvider : ILoggerProvider
         public FileLogger(string category, StreamWriter writer, object lockObj)
         {
             _category = category;
-            _writer   = writer;
-            _lock     = lockObj;
+            _writer = writer;
+            _lock = lockObj;
         }
 
         public bool IsEnabled(LogLevel level) => level >= LogLevel.Information;
@@ -62,12 +62,12 @@ public sealed class RollingFileLoggerProvider : ILoggerProvider
 
             var prefix = level switch
             {
-                LogLevel.Warning     => "WARN ",
-                LogLevel.Error       => "ERROR",
-                LogLevel.Critical    => "CRIT ",
+                LogLevel.Warning => "WARN ",
+                LogLevel.Error => "ERROR",
+                LogLevel.Critical => "CRIT ",
                 LogLevel.Information => "INFO ",
-                LogLevel.Debug       => "DEBUG",
-                _                    => "     "
+                LogLevel.Debug => "DEBUG",
+                _ => "     "
             };
 
             // Shorten category to the last segment to keep lines readable.

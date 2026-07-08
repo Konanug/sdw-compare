@@ -41,9 +41,9 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         StyleHeader(ws, 1, 2);
 
         int unchanged = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Unchanged);
-        int modified  = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Modified);
-        int added     = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
-        int removed   = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
+        int modified = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Modified);
+        int added = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
+        int removed = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
         int suspicious = summary.Components.Count(c => c.DiffType == AssemblyDiffType.SuspiciousMatch);
         int qtyChanged = summary.Components.Count(c => c.QuantityChanged);
 

@@ -53,8 +53,26 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
         @"^NEXT_ASSEMBLY_USAGE_OCCURRENCE\(\s*(?:'[^']*'|\$)\s*,\s*(?:'[^']*'|\$)\s*,\s*(?:'[^']*'|\$)\s*,\s*(#\d+)\s*,\s*(#\d+)\s*,\s*(?:'[^']*'|\$)\s*\)",
         RegexOptions.Compiled);
 
+    // ── Occurrence-placement chain regexes (see ResolveOccurrences) ──────────────────────────
+    // CONTEXT_DEPENDENT_SHAPE_REPRESENTATION(#transformBearingCompound, #nauoWrappingPds) — note
+    // the field order is REVERSED relative to SHAPE_DEFINITION_REPRESENTATION(#pds, #shapeRep).
+    private static readonly Regex CdsrRx =
+        new(@"^CONTEXT_DEPENDENT_SHAPE_REPRESENTATION\(\s*(#\d+)\s*,\s*(#\d+)\s*\)", RegexOptions.Compiled);
+
+    // Pulled out of a compound entity's raw text (which also contains REPRESENTATION_RELATIONSHIP
+    // and SHAPE_REPRESENTATION_RELATIONSHIP on the same P21 instance) — just the one sub-clause
+    // that carries the actual transform reference.
+    private static readonly Regex RepWithTransformRx =
+        new(@"REPRESENTATION_RELATIONSHIP_WITH_TRANSFORMATION\s*\(\s*(#\d+)\s*\)", RegexOptions.Compiled);
+
+    // ITEM_DEFINED_TRANSFORMATION(name, description, #sourceFrame, #targetFrame) — both frames
+    // are AXIS2_PLACEMENT_3D entities; name/description are usually '$' but may be quoted.
+    private static readonly Regex ItemDefinedTransformationRx = new(
+        @"^ITEM_DEFINED_TRANSFORMATION\(\s*(?:'[^']*'|\$)\s*,\s*(?:'[^']*'|\$)\s*,\s*(#\d+)\s*,\s*(#\d+)\s*\)",
+        RegexOptions.Compiled);
+
     private const int MaxNauoWalkSteps = 200_000;
-    private const int MaxNauoDepth     = 64;
+    private const int MaxNauoDepth = 64;
 
     public AssemblyStructure Read()
     {
@@ -62,13 +80,13 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
 
         // ── Reverse-lookup indices for PRODUCT → shape-representation resolution ──────────
         var formationByProduct = BuildRefIndex("PRODUCT_DEFINITION_FORMATION", FormationRx, keyGroup: 1);
-        var pdByFormation       = BuildRefIndex("PRODUCT_DEFINITION", ProductDefinitionRx, keyGroup: 1);
-        var pdsByPd             = BuildRefIndex("PRODUCT_DEFINITION_SHAPE", ProductDefinitionShapeRx, keyGroup: 1);
-        var shapeRepByPds       = BuildShapeRepIndex();
+        var pdByFormation = BuildRefIndex("PRODUCT_DEFINITION", ProductDefinitionRx, keyGroup: 1);
+        var pdsByPd = BuildRefIndex("PRODUCT_DEFINITION_SHAPE", ProductDefinitionShapeRx, keyGroup: 1);
+        var shapeRepByPds = BuildShapeRepIndex();
         var geometryRepByShapeRep = BuildShapeRepRelationshipIndex();
 
         // ── PRODUCT → geometry (leaf components) ───────────────────────────────────────────
-        var components        = new List<AssemblyComponent>();
+        var components = new List<AssemblyComponent>();
         var componentByProduct = new Dictionary<string, AssemblyComponent>(StringComparer.Ordinal);
 
         foreach (var id in reader.AllEntityIds())
@@ -78,7 +96,7 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
             var m = ProductRx.Match(raw);
             if (!m.Success) continue;
 
-            string productId   = m.Groups[1].Value;
+            string productId = m.Groups[1].Value;
             string productName = m.Groups[2].Value;
 
             if (!formationByProduct.TryGetValue(id, out int formationId)) continue;
@@ -123,12 +141,12 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
             // how it happened to be authored/embedded, and previously caused real "same part,
             // different orientation" cases to be misclassified as SuspiciousMatch/Modified.
             var rawPoints = reader.GetAllCartesianPoints(closure);
-            var points    = StepGeometryEstimator.AlignToPrincipalAxes(rawPoints);
-            var bb        = StepGeometryEstimator.ComputeSortedBoundingBox(points);
-            double volumeM3   = StepGeometryEstimator.EstimateVolume(reader, faces, bb);
+            var points = StepGeometryEstimator.AlignToPrincipalAxes(rawPoints);
+            var bb = StepGeometryEstimator.ComputeSortedBoundingBox(points);
+            double volumeM3 = StepGeometryEstimator.EstimateVolume(reader, faces, bb);
             double surfAreaM2 = StepGeometryEstimator.EstimateSurfaceArea(reader, faces, points, bb);
 
-            var descriptors  = new List<string>(faces.Count);
+            var descriptors = new List<string>(faces.Count);
             var faceTypeHist = new Dictionary<string, int>(StringComparer.Ordinal);
             foreach (var (surfId, _) in faces)
             {
@@ -153,7 +171,8 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
                 FaceCount: faces.Count,
                 FaceTypeHistogram: faceTypeHist,
                 FaceGeometricSignature: descriptors,
-                EntityClosure: closure.Order().ToList());
+                EntityClosure: closure.Order().ToList(),
+                OccurrencePositionsM: []); // filled in by the occurrence pass below
 
             components.Add(component);
             if (!componentByProduct.TryAdd(productId, component))
@@ -185,11 +204,19 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
         // ── NAUO parent→child graph + instance counting ────────────────────────────────────
         var instanceCounts = ComputeInstanceCounts(productIdByPd, componentByProduct, warnings);
 
+        // ── Per-occurrence global positions (independent walk — see ResolveOccurrences) ─────
+        var occurrencePositions = ResolveOccurrences(productIdByPd, componentByProduct, warnings);
+
         var result = new List<AssemblyComponent>(components.Count);
         foreach (var c in components)
         {
             instanceCounts.TryGetValue(c.ProductId, out int count);
-            result.Add(c with { InstanceCount = count > 0 ? count : null });
+            occurrencePositions.TryGetValue(c.ProductId, out var positions);
+            result.Add(c with
+            {
+                InstanceCount = count > 0 ? count : null,
+                OccurrencePositionsM = positions ?? []
+            });
         }
 
         return new AssemblyStructure(result, warnings);
@@ -293,7 +320,7 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
     {
         var childrenByParent = new Dictionary<int, List<(int ChildPd, int NauoId)>>();
         var relatingIds = new HashSet<int>();
-        var relatedIds  = new HashSet<int>();
+        var relatedIds = new HashSet<int>();
 
         foreach (var id in reader.AllEntityIds())
         {
@@ -369,6 +396,167 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
                 counts[productId] = 1;
 
         return counts;
+    }
+
+    // Resolves the fully-composed (root-frame) 3D position of every occurrence of every geometry
+    // product, via a SEPARATE walk from ComputeInstanceCounts — a deliberate duplication of the
+    // NAUO parent→child graph construction so a bug here cannot affect the proven instance-count
+    // walk. Returns ProductId → one position per occurrence; the occurrence count matches the
+    // instance count by construction (positions are recorded on exactly the same visit condition
+    // as ComputeInstanceCounts increments the count).
+    //
+    // Each NAUO edge's local hop transform is resolved once (see ResolveLocalHops) and composed
+    // root-to-leaf through every ancestor's transform (PlacementMath.ComposeGlobal), so a part
+    // that moved because a containing sub-assembly moved is captured. An unresolvable hop defaults
+    // to identity — the occurrence is never dropped and nothing is thrown.
+    private Dictionary<string, List<double[]>> ResolveOccurrences(
+        Dictionary<int, string> productIdByPd,
+        Dictionary<string, AssemblyComponent> componentByProduct,
+        List<string> warnings)
+    {
+        var childrenByParent = new Dictionary<int, List<(int ChildPd, int NauoId)>>();
+        var relatingIds = new HashSet<int>();
+        var relatedIds = new HashSet<int>();
+        var allNauoIds = new List<int>();
+
+        foreach (var id in reader.AllEntityIds())
+        {
+            if (reader.GetEntityType(id) != "NEXT_ASSEMBLY_USAGE_OCCURRENCE") continue;
+            if (!reader.TryGetRaw(id, out var raw)) continue;
+            var m = NauoRx.Match(raw);
+            if (!m.Success) continue;
+            if (!TryParseRef(m.Groups[1].Value, out int relatingPd)) continue;
+            if (!TryParseRef(m.Groups[2].Value, out int relatedPd)) continue;
+
+            relatingIds.Add(relatingPd);
+            relatedIds.Add(relatedPd);
+            allNauoIds.Add(id);
+            if (!childrenByParent.TryGetValue(relatingPd, out var list))
+                childrenByParent[relatingPd] = list = [];
+            list.Add((relatedPd, id));
+        }
+
+        var positions = new Dictionary<string, List<double[]>>(StringComparer.Ordinal);
+        if (childrenByParent.Count == 0) return positions; // no structure edges → no placements
+
+        var localHopByNauo = ResolveLocalHops(allNauoIds, warnings);
+
+        var roots = relatingIds.Except(relatedIds).ToList();
+        int steps = 0;
+        bool truncated = false;
+
+        void Visit(int pdId, AssemblyComponentPlacement globalPose, bool hasIncoming, HashSet<int> pathVisited)
+        {
+            if (truncated) return;
+            if (++steps > MaxNauoWalkSteps || pathVisited.Count > MaxNauoDepth)
+            {
+                truncated = true;
+                warnings.Add("NAUO occurrence-position walk exceeded its step/depth safety limit — some positions may be incomplete.");
+                return;
+            }
+            if (!pathVisited.Add(pdId)) return; // cycle already warned about by the instance-count walk
+
+            if (hasIncoming &&
+                productIdByPd.TryGetValue(pdId, out var productId) && componentByProduct.ContainsKey(productId))
+            {
+                if (!positions.TryGetValue(productId, out var list))
+                    positions[productId] = list = [];
+                list.Add([globalPose.PositionM[0], globalPose.PositionM[1], globalPose.PositionM[2]]);
+            }
+
+            if (childrenByParent.TryGetValue(pdId, out var children))
+                foreach (var (childPd, nauoId) in children)
+                {
+                    var hop = localHopByNauo.TryGetValue(nauoId, out var h) ? h : AssemblyComponentPlacement.Identity;
+                    Visit(childPd, PlacementMath.ComposeGlobal(globalPose, hop), true, pathVisited);
+                }
+
+            pathVisited.Remove(pdId);
+        }
+
+        foreach (var root in roots)
+            Visit(root, AssemblyComponentPlacement.Identity, false, []);
+
+        return positions;
+    }
+
+    // NAUO id → its local (parent-relative) hop transform, for every given NAUO. Missing/broken
+    // chains are omitted (the caller substitutes identity), with a single aggregate warning
+    // reporting how many could not be resolved — the fraction is the key manual-verification
+    // signal that this chain-walk generalizes past the single-instance case it was first built for.
+    private Dictionary<int, AssemblyComponentPlacement> ResolveLocalHops(
+        IReadOnlyList<int> nauoIds, List<string> warnings)
+    {
+        var result = new Dictionary<int, AssemblyComponentPlacement>();
+        if (nauoIds.Count == 0) return result;
+        var wanted = new HashSet<int>(nauoIds);
+
+        // NAUO id → wrapping PRODUCT_DEFINITION_SHAPE id (a PDS whose 3rd field references a NAUO
+        // rather than a PRODUCT_DEFINITION).
+        var pdsByNauo = new Dictionary<int, int>();
+        foreach (var id in reader.AllEntityIds())
+        {
+            if (reader.GetEntityType(id) != "PRODUCT_DEFINITION_SHAPE") continue;
+            if (!reader.TryGetRaw(id, out var raw)) continue;
+            var m = ProductDefinitionShapeRx.Match(raw);
+            if (!m.Success || !TryParseRef(m.Groups[1].Value, out int refId)) continue;
+            if (wanted.Contains(refId) && reader.GetEntityType(refId) == "NEXT_ASSEMBLY_USAGE_OCCURRENCE")
+                pdsByNauo[refId] = id;
+        }
+
+        // Wrapping-PDS id → transform-bearing compound id (via CDSR's reversed field order).
+        var compoundByPds = new Dictionary<int, int>();
+        foreach (var id in reader.AllEntityIds())
+        {
+            if (reader.GetEntityType(id) != "CONTEXT_DEPENDENT_SHAPE_REPRESENTATION") continue;
+            if (!reader.TryGetRaw(id, out var raw)) continue;
+            var m = CdsrRx.Match(raw);
+            if (!m.Success) continue;
+            if (!TryParseRef(m.Groups[1].Value, out int compoundId)) continue;
+            if (!TryParseRef(m.Groups[2].Value, out int pdsId)) continue;
+            compoundByPds[pdsId] = compoundId;
+        }
+
+        int unresolved = 0;
+        foreach (var nauoId in wanted)
+        {
+            if (TryResolveHop(nauoId, pdsByNauo, compoundByPds, out var hop))
+                result[nauoId] = hop;
+            else
+                unresolved++;
+        }
+        if (unresolved > 0)
+            warnings.Add($"{unresolved} of {wanted.Count} assembly occurrence transform(s) could not be resolved — " +
+                         "those instances are treated as unmoved (identity) for position comparison.");
+
+        return result;
+    }
+
+    // NAUO → (wrapping PDS) → CONTEXT_DEPENDENT_SHAPE_REPRESENTATION → transform-bearing compound
+    // → ITEM_DEFINED_TRANSFORMATION → two AXIS2_PLACEMENT_3D frames → relative hop placement.
+    private bool TryResolveHop(
+        int nauoId, Dictionary<int, int> pdsByNauo, Dictionary<int, int> compoundByPds,
+        out AssemblyComponentPlacement hop)
+    {
+        hop = AssemblyComponentPlacement.Identity;
+        if (!pdsByNauo.TryGetValue(nauoId, out int pdsId)) return false;
+        if (!compoundByPds.TryGetValue(pdsId, out int compoundId)) return false;
+        if (!reader.TryGetRaw(compoundId, out var compoundRaw)) return false;
+
+        var twm = RepWithTransformRx.Match(compoundRaw);
+        if (!twm.Success || !TryParseRef(twm.Groups[1].Value, out int transformId)) return false;
+        if (!reader.TryGetRaw(transformId, out var transformRaw)) return false;
+
+        var tm = ItemDefinedTransformationRx.Match(transformRaw);
+        if (!tm.Success) return false;
+        if (!TryParseRef(tm.Groups[1].Value, out int frame1Id)) return false;
+        if (!TryParseRef(tm.Groups[2].Value, out int frame2Id)) return false;
+
+        if (!reader.TryGetAxisPlacement(frame1Id, out var origin1, out var axis1, out var refDir1)) return false;
+        if (!reader.TryGetAxisPlacement(frame2Id, out var origin2, out var axis2, out var refDir2)) return false;
+
+        hop = PlacementMath.ComputeRelativePlacement(origin1, axis1, refDir1, origin2, axis2, refDir2);
+        return true;
     }
 
     private static bool TryParseRef(string token, out int id)

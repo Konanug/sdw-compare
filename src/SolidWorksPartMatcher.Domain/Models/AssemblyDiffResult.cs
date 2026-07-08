@@ -49,7 +49,15 @@ public sealed record AssemblyComponentDiff(
     // Short, plain-English bullet points a non-technical user can scan at a glance — no raw
     // measurements or internal jargon (those live in the numeric fields above for anyone who
     // wants them, e.g. the Excel export).
-    IReadOnlyList<string> Reasons);
+    IReadOnlyList<string> Reasons,
+    // Whether any instance of this product sits in a different position in the assembly between
+    // the two versions. Deliberately a coarse per-product boolean — NOT a count and NOT a
+    // per-instance identification (that pinpointing was inconsistent and was removed). Reported
+    // independently of DiffType (a part can change shape/volume and also move, or move without
+    // any shape change). Null = not determined (no resolvable occurrence positions on one/both
+    // sides — never treated as "unchanged"). True = at least one instance has no counterpart
+    // within tolerance. False = every instance matched a counterpart within tolerance.
+    bool? PositionChanged = null);
 
 public sealed record AssemblyDiffSummary(
     string FileAPath,

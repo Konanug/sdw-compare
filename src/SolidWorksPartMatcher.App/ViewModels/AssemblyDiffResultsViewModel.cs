@@ -12,59 +12,95 @@ using WpfMsgBoxImage = System.Windows.MessageBoxImage;
 
 namespace SolidWorksPartMatcher.App.ViewModels;
 
-/// <summary>Display row wrapping one <see cref="AssemblyComponentDiff"/> with formatted deltas.</summary>
+/// <summary>
+/// Display row wrapping one <see cref="AssemblyComponentDiff"/>. The grid uses a checklist style:
+/// parts present in both versions are described purely by three tick columns (Position / Quantity
+/// / Volume), replacing the old prose "what changed" bullets and the many separate status
+/// categories. Added / Removed / Suspicious keep a distinct coloured status word, because those
+/// aren't expressible as a Position/Quantity/Volume tick (a one-sided add/remove, or a
+/// "likely a different part" warning).
+/// </summary>
 public sealed class AssemblyComponentDiffRowViewModel
 {
+    private const string Tick = "✓"; // ✓
+
     public AssemblyComponentDiffRowViewModel(AssemblyComponentDiff diff) => Diff = diff;
 
     public AssemblyComponentDiff Diff { get; }
 
-    // Geometry-unchanged-but-quantity-changed parts get their own distinct status rather than
-    // showing as plain "Unchanged" — the count genuinely differs, which is worth calling out
-    // as its own category rather than burying it in a column badge alone.
-    public bool IsQuantityOnlyChange => Diff.DiffType == AssemblyDiffType.Unchanged && Diff.QuantityChanged;
-
     public string MatchKey => Diff.MatchKey;
-    public string StatusLabel => Diff.DiffType switch
+
+    // A part present in both versions — the only case where Position/Quantity/Volume ticks are
+    // meaningful (Added/Removed have nothing to compare against).
+    private bool IsTwoSided => Diff.ComponentA is not null && Diff.ComponentB is not null;
+
+    // Kept as a distinct coloured word rather than folded into the tick columns.
+    public bool ShowStatusBadge => Diff.DiffType
+        is AssemblyDiffType.Added or AssemblyDiffType.Removed or AssemblyDiffType.SuspiciousMatch;
+    public string StatusBadge => Diff.DiffType switch
     {
-        AssemblyDiffType.Unchanged when IsQuantityOnlyChange => "Quantity Changed",
-        AssemblyDiffType.Unchanged => "Unchanged",
-        AssemblyDiffType.Modified => "Modified",
         AssemblyDiffType.Added => "Added",
         AssemblyDiffType.Removed => "Removed",
-        AssemblyDiffType.SuspiciousMatch => "Suspicious Match",
-        _ => Diff.DiffType.ToString()
+        AssemblyDiffType.SuspiciousMatch => "Suspicious",
+        _ => ""
     };
+
+    // ── Checklist ticks ──────────────────────────────────────────────────────────────────────
+    // A tick means that specific kind of change was detected. Blank otherwise. Volume "changed"
+    // is exactly the classification signal (Modified/Suspicious are reached only via a real
+    // volume delta); Quantity and Position mirror the detected flags on the diff.
+    public bool HasVolumeChange => IsTwoSided
+        && Diff.DiffType is AssemblyDiffType.Modified or AssemblyDiffType.SuspiciousMatch;
+    public bool HasQuantityChange => Diff.QuantityChanged;
+    public bool HasPositionChange => Diff.PositionChanged == true;
+    // A geometric-fallback pairing (different names, matched by shape) — i.e. a likely rename.
+    public bool IsRenamed => IsTwoSided && Diff.GeometricSimilarityScore is not null;
+
+    public string VolumeMark => HasVolumeChange ? Tick : "";
+    public string QuantityMark => HasQuantityChange ? Tick : "";
+    public string PositionMark => HasPositionChange ? Tick : "";
+
+    // The underlying numbers, surfaced on hover so the ticks stay clean but no detail is lost.
+    public string QuantityDetail =>
+        $"{Diff.InstanceCountA?.ToString() ?? "?"} → {Diff.InstanceCountB?.ToString() ?? "?"}";
+    public string VolumeDetail => Diff.VolumeDeltaPercent is { } v ? $"{v:+0.00;-0.00;0}%" : "—";
+
+    // Spelled-out specifics for the changes the ticks can't quantify: how much the quantity
+    // changed, the exact volume %, and whether the name changed (rename). Only the applicable
+    // lines appear; blank for a plain unchanged part.
+    public string DetailText
+    {
+        get
+        {
+            var lines = new List<string>();
+            if (IsRenamed)
+                lines.Add($"Renamed: {(Diff.ComponentA?.MatchKey)} → {(Diff.ComponentB?.MatchKey)}");
+            if (HasQuantityChange)
+                lines.Add($"Quantity: {Diff.InstanceCountA} → {Diff.InstanceCountB}");
+            if (HasVolumeChange && Diff.VolumeDeltaPercent is { } v)
+                lines.Add($"Volume: {v:+0.##;-0.##;0}%");
+            return string.Join(Environment.NewLine, lines);
+        }
+    }
+
+    public bool HasAnyChange => HasVolumeChange || HasQuantityChange || HasPositionChange;
+
+    // Split changed parts away from unchanged ones. Added/Removed/Suspicious and any two-sided
+    // part with a detected change are "Changed"; a plain identical part is "Unchanged".
+    public bool IsUnchanged =>
+        Diff.DiffType == AssemblyDiffType.Unchanged && !HasAnyChange;
+    public string Group => IsUnchanged ? "Unchanged" : "Changed";
+    public int GroupRank => IsUnchanged ? 1 : 0; // Changed group sorts first
 
     public string StatusBrush => Diff.DiffType switch
     {
-        AssemblyDiffType.Unchanged when IsQuantityOnlyChange => "#EDE7F6",
-        AssemblyDiffType.Unchanged => "#E8F5E9",
-        AssemblyDiffType.Modified => "#FFF8E1",
         AssemblyDiffType.Added => "#E3F2FD",
         AssemblyDiffType.Removed => "#FFEBEE",
         AssemblyDiffType.SuspiciousMatch => "#FFF3E0",
-        _ => "#F5F5F5"
+        // Everything else present in both versions: one "changed" colour (collapsing the former
+        // Modified / Quantity / Placement categories) vs. plain unchanged.
+        _ => HasAnyChange ? "#FFF8E1" : "#E8F5E9"
     };
-
-    // Always concrete numbers — a missing part is quantity 0, never "?" (see AssemblyComponentMatcher,
-    // which now populates InstanceCountA/B as 0 for Added/Removed rather than leaving them null).
-    public string QuantityLabel => Diff.InstanceCountA.HasValue || Diff.InstanceCountB.HasValue
-        ? $"{Diff.InstanceCountA?.ToString() ?? "?"} → {Diff.InstanceCountB?.ToString() ?? "?"}"
-        : "—";
-
-    // The real (OCCT) volume delta — the sole classification signal. Bounding box is no longer
-    // computed or shown at all: it produced skewed/false results (a small local feature could
-    // swing one bbox axis disproportionately while true volume barely moved, and vice versa).
-    // Always shown for any matched pair — even 0.00%, since it's genuinely useful reference
-    // data. Only "—" for Added/Removed, where there's no second side to compare against. 2
-    // decimal places (not 1) so a real ~-99.98% doesn't misleadingly round to "-100.0%".
-    public string VolumeDeltaLabel => Diff.VolumeDeltaPercent is { } v ? $"{v:+0.00;-0.00;0}%" : "—";
-
-    // One bullet per line — easier to scan than a single semicolon-joined sentence. Each bullet
-    // is short, plain-English, and free of raw internal measurements (those live on the Diff
-    // record itself, e.g. for the Excel export, not in this user-facing text).
-    public string ReasonText => string.Join(Environment.NewLine, Diff.Reasons.Select(r => $"• {r}"));
 
     // A 3D view is available whenever there's at least one side to show — for Added/Removed
     // parts there's nothing to compare against, but the single remaining side can still be
@@ -82,16 +118,66 @@ public sealed partial class AssemblyDiffResultsViewModel : ObservableObject
 
     public ObservableCollection<AssemblyComponentDiffRowViewModel> Rows { get; }
 
+    // Grouped ("Changed" / "Unchanged") and filterable view bound by the grid. The toggle
+    // filters below combine with AND: a row is shown only if it matches every active filter.
+    public System.ComponentModel.ICollectionView RowsView { get; }
+
     public int UnchangedCount { get; }
-    public int ModifiedCount { get; }
+    // Collapses the former Modified / Quantity-change / Placement-change categories: any part
+    // present in both versions with at least one detected Position/Quantity/Volume change.
+    public int ChangedCount { get; }
     public int AddedCount { get; }
     public int RemovedCount { get; }
     public int SuspiciousCount { get; }
-    // Geometry-unchanged-but-quantity-changed parts — its own distinct category (see
-    // AssemblyComponentDiffRowViewModel.IsQuantityOnlyChange). Rows that are BOTH shape-Modified
-    // AND quantity-changed are still counted under ModifiedCount, not here — the quantity delta
-    // for those rows is still visible per-row via QuantityLabel.
-    public int QuantityChangeCount { get; }
+
+    // ── Filter toggles (AND-combined) ────────────────────────────────────────────────────────
+    // Each toggle isolates rows with that change; multiple toggles require ALL of them to hold
+    // (e.g. Position + Volume → only parts that both moved AND changed volume). No toggles = show
+    // everything. "Clear" (ClearFiltersCommand) deselects all.
+    [ObservableProperty] private bool _filterPosition;
+    [ObservableProperty] private bool _filterQuantity;
+    [ObservableProperty] private bool _filterVolume;
+    [ObservableProperty] private bool _filterRenamed;
+    [ObservableProperty] private bool _filterAdded;
+    [ObservableProperty] private bool _filterRemoved;
+    [ObservableProperty] private bool _filterSuspicious;
+
+    partial void OnFilterPositionChanged(bool value) => OnFilterChanged();
+    partial void OnFilterQuantityChanged(bool value) => OnFilterChanged();
+    partial void OnFilterVolumeChanged(bool value) => OnFilterChanged();
+    partial void OnFilterRenamedChanged(bool value) => OnFilterChanged();
+    partial void OnFilterAddedChanged(bool value) => OnFilterChanged();
+    partial void OnFilterRemovedChanged(bool value) => OnFilterChanged();
+    partial void OnFilterSuspiciousChanged(bool value) => OnFilterChanged();
+
+    private void OnFilterChanged()
+    {
+        RowsView.Refresh();
+        OnPropertyChanged(nameof(AnyFilterActive));
+    }
+
+    public bool AnyFilterActive => FilterPosition || FilterQuantity || FilterVolume
+        || FilterRenamed || FilterAdded || FilterRemoved || FilterSuspicious;
+
+    [RelayCommand]
+    private void ClearFilters()
+    {
+        FilterPosition = FilterQuantity = FilterVolume = FilterRenamed
+            = FilterAdded = FilterRemoved = FilterSuspicious = false;
+    }
+
+    private bool MatchesFilters(object item)
+    {
+        var r = (AssemblyComponentDiffRowViewModel)item;
+        if (FilterPosition && !r.HasPositionChange) return false;
+        if (FilterQuantity && !r.HasQuantityChange) return false;
+        if (FilterVolume && !r.HasVolumeChange) return false;
+        if (FilterRenamed && !r.IsRenamed) return false;
+        if (FilterAdded && r.Diff.DiffType != AssemblyDiffType.Added) return false;
+        if (FilterRemoved && r.Diff.DiffType != AssemblyDiffType.Removed) return false;
+        if (FilterSuspicious && r.Diff.DiffType != AssemblyDiffType.SuspiciousMatch) return false;
+        return true;
+    }
 
     // Old/new file being compared — shown in the results window so it's always clear which two
     // files produced this comparison, without having to check the title bar or re-open the
@@ -110,22 +196,41 @@ public sealed partial class AssemblyDiffResultsViewModel : ObservableObject
         IAssemblyDiffReportExporter exporter,
         ILogger<AssemblyDiffResultsViewModel> logger)
     {
-        _summary  = summary;
-        _pathA    = pathA;
-        _pathB    = pathB;
+        _summary = summary;
+        _pathA = pathA;
+        _pathB = pathB;
         _exporter = exporter;
-        _logger   = logger;
+        _logger = logger;
 
         Rows = new ObservableCollection<AssemblyComponentDiffRowViewModel>(
             summary.Components.Select(c => new AssemblyComponentDiffRowViewModel(c)));
 
-        UnchangedCount      = summary.Components.Count(c =>
-            c.DiffType == AssemblyDiffType.Unchanged && !c.QuantityChanged);
-        ModifiedCount       = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Modified);
-        AddedCount          = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
-        RemovedCount        = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
-        SuspiciousCount     = summary.Components.Count(c => c.DiffType == AssemblyDiffType.SuspiciousMatch);
-        QuantityChangeCount = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Unchanged && c.QuantityChanged);
+        // Grouped ("Changed" first, then "Unchanged"), alphabetical within a group, and filtered
+        // by the toggle bar. Column-header sorting is disabled in the view (it was confusing);
+        // ordering is fixed here instead.
+        var cvs = new System.Windows.Data.CollectionViewSource { Source = Rows };
+        cvs.GroupDescriptions.Add(
+            new System.Windows.Data.PropertyGroupDescription(nameof(AssemblyComponentDiffRowViewModel.Group)));
+        cvs.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+            nameof(AssemblyComponentDiffRowViewModel.GroupRank), System.ComponentModel.ListSortDirection.Ascending));
+        cvs.SortDescriptions.Add(new System.ComponentModel.SortDescription(
+            nameof(AssemblyComponentDiffRowViewModel.MatchKey), System.ComponentModel.ListSortDirection.Ascending));
+        RowsView = cvs.View;
+        RowsView.Filter = MatchesFilters;
+
+        // A two-sided part "changed" if it has any detected Position/Quantity/Volume difference
+        // (Modified always implies a volume change; an Unchanged-shape part can still be flagged
+        // via quantity or position). Suspicious/Added/Removed are counted on their own.
+        static bool AnyChange(AssemblyComponentDiff c) =>
+            c.DiffType == AssemblyDiffType.Modified || c.QuantityChanged || c.PositionChanged == true;
+
+        UnchangedCount = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Unchanged && !AnyChange(c));
+        ChangedCount = summary.Components.Count(c =>
+            c.DiffType == AssemblyDiffType.Modified ||
+            (c.DiffType == AssemblyDiffType.Unchanged && AnyChange(c)));
+        AddedCount = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
+        RemovedCount = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
+        SuspiciousCount = summary.Components.Count(c => c.DiffType == AssemblyDiffType.SuspiciousMatch);
 
         if (summary.Warnings.Count > 0)
             StatusMessage = $"{summary.Warnings.Count} warning(s) — see Export Report for details.";
@@ -215,8 +320,8 @@ public sealed partial class AssemblyDiffResultsViewModel : ObservableObject
     {
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
-            Title    = "Export Assembly Diff Report",
-            Filter   = "Excel Workbook (*.xlsx)|*.xlsx",
+            Title = "Export Assembly Diff Report",
+            Filter = "Excel Workbook (*.xlsx)|*.xlsx",
             FileName = $"AssemblyDiff_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx"
         };
         if (dlg.ShowDialog() != true) return;

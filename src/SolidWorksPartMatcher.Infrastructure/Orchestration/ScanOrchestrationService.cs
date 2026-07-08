@@ -497,7 +497,7 @@ public sealed class ScanOrchestrationService(
         IReadOnlyList<PartCluster> clusters)
     {
         var parent = fingerprints.ToDictionary(f => f.Id, f => f.Id);
-        var rank   = fingerprints.ToDictionary(f => f.Id, _ => 0);
+        var rank = fingerprints.ToDictionary(f => f.Id, _ => 0);
 
         Guid Find(Guid id)
         {
@@ -548,14 +548,14 @@ public sealed class ScanOrchestrationService(
     {
         if (a.SuppressedVolumeM3 == null && b.SuppressedVolumeM3 == null) return (false, null);
 
-        double baseVolA = a.SuppressedVolumeM3  ?? a.VolumeM3;
-        double baseVolB = b.SuppressedVolumeM3  ?? b.VolumeM3;
-        int baseFaceA   = a.SuppressedFaceCount ?? a.FaceCount;
-        int baseFaceB   = b.SuppressedFaceCount ?? b.FaceCount;
-        int baseEdgeA   = a.SuppressedEdgeCount ?? a.EdgeCount;
-        int baseEdgeB   = b.SuppressedEdgeCount ?? b.EdgeCount;
-        int baseVertA   = a.SuppressedVertexCount ?? a.VertexCount;
-        int baseVertB   = b.SuppressedVertexCount ?? b.VertexCount;
+        double baseVolA = a.SuppressedVolumeM3 ?? a.VolumeM3;
+        double baseVolB = b.SuppressedVolumeM3 ?? b.VolumeM3;
+        int baseFaceA = a.SuppressedFaceCount ?? a.FaceCount;
+        int baseFaceB = b.SuppressedFaceCount ?? b.FaceCount;
+        int baseEdgeA = a.SuppressedEdgeCount ?? a.EdgeCount;
+        int baseEdgeB = b.SuppressedEdgeCount ?? b.EdgeCount;
+        int baseVertA = a.SuppressedVertexCount ?? a.VertexCount;
+        int baseVertB = b.SuppressedVertexCount ?? b.VertexCount;
 
         if (baseFaceA != baseFaceB || baseEdgeA != baseEdgeB || baseVertA != baseVertB)
             return (false, null);
@@ -635,7 +635,7 @@ public sealed class ScanOrchestrationService(
     {
         var ext = Path.GetExtension(path);
         return string.Equals(ext, ".step", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(ext, ".stp",  StringComparison.OrdinalIgnoreCase);
+            || string.Equals(ext, ".stp", StringComparison.OrdinalIgnoreCase);
     }
 
     private static void Report(IProgress<ScanProgress>? p, string stage, string detail, int cur, int total)

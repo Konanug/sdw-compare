@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Builds the standalone STEP viewer (view_steps.exe) using PyInstaller.
+    Builds the bundled Python tools (view_steps.exe + compute_component_volume.exe, one shared
+    bundle) using PyInstaller.
     Run this once on any developer machine that has Python + pyvista + build123d installed.
     The output (tools/dist/view_steps/) is then picked up by publish.ps1.
 
@@ -47,9 +48,13 @@ try {
     if ($LASTEXITCODE -ne 0) { Write-Error "PyInstaller failed (exit $LASTEXITCODE)" }
 
     # ── Verify output ─────────────────────────────────────────────────────────
-    $exePath = Join-Path $toolsDir "dist\view_steps\view_steps.exe"
-    if (-not (Test-Path $exePath)) {
-        Write-Error "Build succeeded but expected exe not found: $exePath"
+    # The one bundle carries BOTH tools (they share the Python/OCP runtime): the 3D viewer and
+    # the real-volume computer the assembly-comparison feature depends on for accurate volumes.
+    foreach ($exeName in @("view_steps.exe", "compute_component_volume.exe")) {
+        $exePath = Join-Path $toolsDir "dist\view_steps\$exeName"
+        if (-not (Test-Path $exePath)) {
+            Write-Error "Build succeeded but expected exe not found: $exePath"
+        }
     }
 
     $bundleDir = Join-Path $toolsDir "dist\view_steps"

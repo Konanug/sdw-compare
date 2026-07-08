@@ -43,9 +43,7 @@
         <!-- ── Loading indicator + status ───────────────────────────────── -->
         <StackPanel Grid.Row="2" Margin="10,6,10,2">
             <ProgressBar x:Name="LoadingBar"
-                         IsIndeterminate="True"
-                         Height="4"
-                         Foreground="#00E576"
+                         Style="{StaticResource BlueLoadingBar}"
                          Visibility="Collapsed"
                          Margin="0,0,0,5"/>
             <TextBlock x:Name="SummaryLabel"

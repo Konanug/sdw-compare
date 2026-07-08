@@ -18,7 +18,7 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
 {
     // Bump when the face descriptor format changes so cached signatures are invalidated.
     public const string VersionLabel = "step-p21-1";
-    public const int    Version      = 100;
+    public const int Version = 100;
 
     public PartFingerprint? Extract(ScannedFile file)
     {
@@ -47,7 +47,7 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
         }
 
         // Build face descriptors and face-type histogram
-        var descriptors  = new List<string>(faces.Count);
+        var descriptors = new List<string>(faces.Count);
         var faceTypeHist = new Dictionary<string, int>(StringComparer.Ordinal);
 
         foreach (var (surfId, _) in faces)
@@ -70,7 +70,7 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
         var bb = StepGeometryEstimator.ComputeSortedBoundingBox(points);
 
         // Volume estimate: analytical for pure cylinder, BB volume otherwise
-        double volumeM3   = StepGeometryEstimator.EstimateVolume(reader, faces, bb);
+        double volumeM3 = StepGeometryEstimator.EstimateVolume(reader, faces, bb);
         double surfAreaM2 = StepGeometryEstimator.EstimateSurfaceArea(reader, faces, points, bb);
 
         int solidBodyCount = Math.Max(1, reader.GetManifoldSolidCount());

@@ -9,6 +9,7 @@
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -30,23 +31,47 @@
             <StackPanel Orientation="Horizontal">
                 <TextBlock Text="{Binding UnchangedCount, StringFormat='Unchanged: {0}'}"
                            Foreground="#A5D6A7" Margin="0,0,20,0"/>
-                <TextBlock Text="{Binding ModifiedCount, StringFormat='Modified: {0}'}"
+                <TextBlock Text="{Binding ChangedCount, StringFormat='Changed: {0}'}"
                            Foreground="#FFE082" Margin="0,0,20,0"/>
                 <TextBlock Text="{Binding AddedCount, StringFormat='Added: {0}'}"
                            Foreground="#90CAF9" Margin="0,0,20,0"/>
                 <TextBlock Text="{Binding RemovedCount, StringFormat='Removed: {0}'}"
                            Foreground="#EF9A9A" Margin="0,0,20,0"/>
                 <TextBlock Text="{Binding SuspiciousCount, StringFormat='Suspicious: {0}'}"
-                           Foreground="#FFCC80" Margin="0,0,20,0"/>
-                <TextBlock Text="{Binding QuantityChangeCount, StringFormat='Quantity Change: {0}'}"
-                           Foreground="#CE93D8"/>
+                           Foreground="#FFCC80"/>
             </StackPanel>
         </Border>
 
+        <!-- ── Filter bar: toggle to isolate rows; multiple toggles combine with AND ────────── -->
+        <Border Grid.Row="2" Background="#ECEFF1" Padding="14,8" BorderBrush="#CFD8DC" BorderThickness="0,0,0,1">
+            <Border.Resources>
+                <Style TargetType="ToggleButton">
+                    <Setter Property="Padding" Value="10,4"/>
+                    <Setter Property="Margin" Value="0,0,8,0"/>
+                    <Setter Property="MinWidth" Value="72"/>
+                </Style>
+            </Border.Resources>
+            <WrapPanel Orientation="Horizontal">
+                <TextBlock Text="Show only:" VerticalAlignment="Center" Foreground="#455A64"
+                           FontWeight="SemiBold" Margin="0,0,10,0"/>
+                <ToggleButton Content="Position"   IsChecked="{Binding FilterPosition}"/>
+                <ToggleButton Content="Quantity"   IsChecked="{Binding FilterQuantity}"/>
+                <ToggleButton Content="Volume"     IsChecked="{Binding FilterVolume}"/>
+                <ToggleButton Content="Renamed"    IsChecked="{Binding FilterRenamed}"/>
+                <ToggleButton Content="Added"      IsChecked="{Binding FilterAdded}"/>
+                <ToggleButton Content="Removed"    IsChecked="{Binding FilterRemoved}"/>
+                <ToggleButton Content="Suspicious" IsChecked="{Binding FilterSuspicious}"/>
+                <Button Content="Clear" Padding="10,4" Margin="6,0,0,0" MinWidth="60"
+                        Command="{Binding ClearFiltersCommand}"
+                        IsEnabled="{Binding AnyFilterActive}"/>
+            </WrapPanel>
+        </Border>
+
         <!-- ── Results grid ───────────────────────────────────────────────── -->
-        <DataGrid Grid.Row="2" ItemsSource="{Binding Rows}"
+        <DataGrid Grid.Row="3" ItemsSource="{Binding RowsView}"
                   AutoGenerateColumns="False" IsReadOnly="True"
                   CanUserAddRows="False" CanUserDeleteRows="False"
+                  CanUserSortColumns="False"
                   GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#D0D0D0"
                   HeadersVisibility="Column"
                   AutomationProperties.Name="Assembly component diffs">
@@ -60,36 +85,100 @@
                     <Setter Property="Background" Value="{Binding StatusBrush}"/>
                 </Style>
             </DataGrid.RowStyle>
+            <!-- Split changed parts away from unchanged ones under bold group headers. -->
+            <DataGrid.GroupStyle>
+                <GroupStyle>
+                    <GroupStyle.HeaderTemplate>
+                        <DataTemplate>
+                            <TextBlock FontWeight="Bold" FontSize="14" Foreground="#37474F"
+                                       Margin="6,12,0,4">
+                                <Run Text="{Binding Name, Mode=OneWay}"/>
+                                <Run Text="{Binding ItemCount, Mode=OneWay, StringFormat=' ({0})'}"
+                                     Foreground="#78909C"/>
+                            </TextBlock>
+                        </DataTemplate>
+                    </GroupStyle.HeaderTemplate>
+                </GroupStyle>
+            </DataGrid.GroupStyle>
             <DataGrid.Resources>
-                <!-- Shared cell text style: top-aligned (so short single-line cells line up with
-                     the first bullet of taller multi-line rows) with generous side margins so
-                     columns don't feel crowded against each other. -->
+                <!-- Shared cell text style: top-aligned with generous side margins so columns
+                     don't feel crowded against each other. -->
                 <Style x:Key="CellText" TargetType="TextBlock">
                     <Setter Property="VerticalAlignment" Value="Top"/>
                     <Setter Property="Margin" Value="10,6,10,6"/>
                 </Style>
+                <!-- Centre the header text of the tick columns over their centred ticks. -->
+                <Style x:Key="CenterHeader" TargetType="DataGridColumnHeader">
+                    <Setter Property="HorizontalContentAlignment" Value="Center"/>
+                </Style>
+                <!-- A detected-change tick: bold green ✓, centred; blank when no change. -->
+                <Style x:Key="TickCell" TargetType="TextBlock">
+                    <Setter Property="HorizontalAlignment" Value="Center"/>
+                    <Setter Property="VerticalAlignment" Value="Top"/>
+                    <Setter Property="Margin" Value="0,6,0,6"/>
+                    <Setter Property="FontSize" Value="15"/>
+                    <Setter Property="FontWeight" Value="Bold"/>
+                    <Setter Property="Foreground" Value="#2E7D32"/>
+                </Style>
+                <!-- Selection is not meaningful in this read-only grid, and the auto-selected
+                     first row (after a filter refresh) would otherwise paint grey over the row's
+                     status colour. Keep the selected/current cell transparent so StatusBrush
+                     always shows. -->
+                <Style TargetType="DataGridCell">
+                    <Setter Property="BorderBrush" Value="Transparent"/>
+                    <Style.Triggers>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter Property="Background" Value="Transparent"/>
+                            <Setter Property="Foreground" Value="Black"/>
+                            <Setter Property="BorderBrush" Value="Transparent"/>
+                        </Trigger>
+                    </Style.Triggers>
+                </Style>
             </DataGrid.Resources>
             <DataGrid.Columns>
-                <DataGridTextColumn Header="Part" Binding="{Binding MatchKey}" Width="200"
+                <DataGridTextColumn Header="Part" Binding="{Binding MatchKey}" Width="240"
                                      ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="Status" Binding="{Binding StatusLabel}" Width="150"
-                                     ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="Qty A → B" Binding="{Binding QuantityLabel}" Width="110"
-                                     ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="Volume Δ" Binding="{Binding VolumeDeltaLabel}" Width="110"
-                                     ElementStyle="{StaticResource CellText}"/>
-                <DataGridTextColumn Header="What changed" Binding="{Binding ReasonText}" Width="*">
+                <!-- Only Added / Removed / Suspicious carry a status word; everything else is
+                     described by the tick columns. -->
+                <DataGridTextColumn Header="Status" Binding="{Binding StatusBadge}" Width="130">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock" BasedOn="{StaticResource CellText}">
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Position" Binding="{Binding PositionMark}" Width="100"
+                                     ElementStyle="{StaticResource TickCell}"
+                                     HeaderStyle="{StaticResource CenterHeader}"/>
+                <DataGridTemplateColumn Header="Quantity" Width="100" HeaderStyle="{StaticResource CenterHeader}">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding QuantityMark}" ToolTip="{Binding QuantityDetail}"
+                                       Style="{StaticResource TickCell}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Header="Volume" Width="100" HeaderStyle="{StaticResource CenterHeader}">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding VolumeMark}" ToolTip="{Binding VolumeDetail}"
+                                       Style="{StaticResource TickCell}"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <!-- Detail: the specifics the ticks can't quantify (how much the quantity changed,
+                     the exact volume %, and whether the part was renamed). -->
+                <DataGridTextColumn Header="Details" Binding="{Binding DetailText}" Width="*">
                     <DataGridTextColumn.ElementStyle>
                         <Style TargetType="TextBlock" BasedOn="{StaticResource CellText}">
                             <Setter Property="TextWrapping" Value="Wrap"/>
+                            <Setter Property="Foreground" Value="#455A64"/>
                         </Style>
                     </DataGridTextColumn.ElementStyle>
                 </DataGridTextColumn>
                 <DataGridTemplateColumn Header="" Width="100">
                     <DataGridTemplateColumn.CellTemplate>
                         <DataTemplate>
-                            <!-- Fixed size regardless of row height: Top-aligned instead of the
-                                 default Stretch, so it never grows to fill a taller multi-bullet row. -->
                             <Button Content="3D View" Padding="8,4" Margin="6"
                                     VerticalAlignment="Top" HorizontalAlignment="Left"
                                     Visibility="{Binding CanViewDiff, Converter={StaticResource BoolVis}}"
@@ -103,7 +192,7 @@
         </DataGrid>
 
         <!-- ── Button bar ─────────────────────────────────────────────────── -->
-        <Border Grid.Row="3" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,8">
+        <Border Grid.Row="4" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,8">
             <DockPanel>
                 <TextBlock DockPanel.Dock="Left" Text="{Binding StatusMessage}"
                            Foreground="#666" VerticalAlignment="Center"/>

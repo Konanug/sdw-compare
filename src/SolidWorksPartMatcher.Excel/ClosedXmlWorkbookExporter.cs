@@ -35,7 +35,7 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
     private static void AddMatchesSheet(XLWorkbook wb, ExportContext ctx)
     {
         var fileById = ctx.Files.ToDictionary(f => f.Id);
-        var fpById   = ctx.Fingerprints.ToDictionary(f => f.Id);
+        var fpById = ctx.Fingerprints.ToDictionary(f => f.Id);
 
         // Build (cluster, orderedFiles, memberFingerprints) only for groups with ≥2 files
         var matchedGroups = ctx.Clusters
@@ -128,10 +128,10 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
         };
         WriteHeaders(ws, headers);
 
-        var fpById       = ctx.Fingerprints.ToDictionary(f => f.Id);
-        var fpByFileId   = ctx.Fingerprints.ToDictionary(f => f.ScannedFileId);
-        var clusterByFp  = ctx.Members.ToDictionary(m => m.FingerprintId, m => m.ClusterId);
-        var clusterById  = ctx.Clusters.ToDictionary(c => c.Id);
+        var fpById = ctx.Fingerprints.ToDictionary(f => f.Id);
+        var fpByFileId = ctx.Fingerprints.ToDictionary(f => f.ScannedFileId);
+        var clusterByFp = ctx.Members.ToDictionary(m => m.FingerprintId, m => m.ClusterId);
+        var clusterById = ctx.Clusters.ToDictionary(c => c.Id);
         var membersByCluster = ctx.Members
             .GroupBy(m => m.ClusterId)
             .ToDictionary(g => g.Key, g => g.ToList());
@@ -174,7 +174,7 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
             if (bb.Length > 0) ws.Cell(row, 6).Value = Math.Round(bb[0] * 1000.0, 2);
             if (bb.Length > 1) ws.Cell(row, 7).Value = Math.Round(bb[1] * 1000.0, 2);
             if (bb.Length > 2) ws.Cell(row, 8).Value = Math.Round(bb[2] * 1000.0, 2);
-            if (fp != null)    ws.Cell(row, 9).Value = Math.Round(fp.VolumeM3 * 1e6, 2);
+            if (fp != null) ws.Cell(row, 9).Value = Math.Round(fp.VolumeM3 * 1e6, 2);
 
             row++;
         }
@@ -194,7 +194,7 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
         };
         WriteHeaders(ws, headers);
 
-        var fpById   = ctx.Fingerprints.ToDictionary(f => f.Id);
+        var fpById = ctx.Fingerprints.ToDictionary(f => f.Id);
         var fileById = ctx.Files.ToDictionary(f => f.Id);
         int row = 2;
 
@@ -211,7 +211,7 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
             ws.Cell(row, 4).Value = HumanType(pair.Classification);
             ws.Cell(row, 5).Value = pair.ClassificationReason ?? "";
 
-                row++;
+            row++;
         }
 
         FormatAsTable(ws, "ComparisonDetails", 1, row - 1, headers.Length);
@@ -228,14 +228,14 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
         ws.Row(1).Style.Fill.BackgroundColor = XLColor.FromHtml("#1F4E79");
         ws.Row(1).Style.Font.FontColor = XLColor.White;
 
-        int matched      = ctx.Clusters.Count(c => c.Classification != PartClassification.Distinct);
-        int identical    = ctx.Clusters.Count(c => c.Classification == PartClassification.BinaryDuplicate);
-        int sameGeo      = ctx.Clusters.Count(c => c.Classification == PartClassification.ExactGeometryMatch);
-        int matVariant   = ctx.Clusters.Count(c => c.Classification == PartClassification.GeometryMatchMetadataVariant);
-        int mirror       = ctx.Clusters.Count(c => c.Classification == PartClassification.MirrorOrHandedVariant);
-        int revision     = ctx.Clusters.Count(c => c.Classification == PartClassification.RevisionFamily);
-        int engraving    = ctx.Clusters.Count(c => c.Classification == PartClassification.EngravingVariant);
-        int review       = ctx.Clusters.Count(c => c.Classification == PartClassification.PossibleMatch);
+        int matched = ctx.Clusters.Count(c => c.Classification != PartClassification.Distinct);
+        int identical = ctx.Clusters.Count(c => c.Classification == PartClassification.BinaryDuplicate);
+        int sameGeo = ctx.Clusters.Count(c => c.Classification == PartClassification.ExactGeometryMatch);
+        int matVariant = ctx.Clusters.Count(c => c.Classification == PartClassification.GeometryMatchMetadataVariant);
+        int mirror = ctx.Clusters.Count(c => c.Classification == PartClassification.MirrorOrHandedVariant);
+        int revision = ctx.Clusters.Count(c => c.Classification == PartClassification.RevisionFamily);
+        int engraving = ctx.Clusters.Count(c => c.Classification == PartClassification.EngravingVariant);
+        int review = ctx.Clusters.Count(c => c.Classification == PartClassification.PossibleMatch);
 
         var kvs = new List<(string, string)>
         {
@@ -269,15 +269,15 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
 
     private static string HumanType(PartClassification cls) => cls switch
     {
-        PartClassification.BinaryDuplicate               => "Geometry Match (Identical Copy)",
-        PartClassification.ExactGeometryMatch            => "Geometry Match",
-        PartClassification.GeometryMatchMetadataVariant  => "Geometry Match (Metadata Variant)",
-        PartClassification.MirrorOrHandedVariant         => "Geometry Match (Mirror Variant)",
-        PartClassification.RevisionFamily                => "Geometry Match (Revision Family)",
-        PartClassification.EngravingVariant              => "Geometry Match (Engraving Variant)",
-        PartClassification.PossibleMatch                 => "Possible Match",
-        PartClassification.Distinct                      => "Unique",
-        PartClassification.ComparisonFailed              => "Comparison Failed",
+        PartClassification.BinaryDuplicate => "Geometry Match (Identical Copy)",
+        PartClassification.ExactGeometryMatch => "Geometry Match",
+        PartClassification.GeometryMatchMetadataVariant => "Geometry Match (Metadata Variant)",
+        PartClassification.MirrorOrHandedVariant => "Geometry Match (Mirror Variant)",
+        PartClassification.RevisionFamily => "Geometry Match (Revision Family)",
+        PartClassification.EngravingVariant => "Geometry Match (Engraving Variant)",
+        PartClassification.PossibleMatch => "Possible Match",
+        PartClassification.Distinct => "Unique",
+        PartClassification.ComparisonFailed => "Comparison Failed",
         _ => cls.ToString()
     };
 
@@ -329,8 +329,8 @@ public sealed class ClosedXmlWorkbookExporter(ILogger<ClosedXmlWorkbookExporter>
         {
             // Non-engraving clusters: note engraving as an observation if present on any member.
             bool anyTextCut = fps.Any(fp => fp.SketchTextCutCount > 0);
-            bool anyWrap    = fps.Any(HasWrapOrCosmetic);
-            var engFlags    = fps.Select(fp => fp.SketchTextCutCount > 0 || HasWrapOrCosmetic(fp)).ToList();
+            bool anyWrap = fps.Any(HasWrapOrCosmetic);
+            var engFlags = fps.Select(fp => fp.SketchTextCutCount > 0 || HasWrapOrCosmetic(fp)).ToList();
             if ((anyTextCut || anyWrap) && engFlags.Contains(true) && engFlags.Contains(false))
                 notes.Add("Engraving / marking differs between files — check if intentional");
         }

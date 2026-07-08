@@ -22,20 +22,20 @@ public sealed partial class MainViewModel : ObservableObject
     // ── Services ──────────────────────────────────────────────────────────────
 
     private readonly IScanOrchestrationService _scanner;
-    private readonly IPartRepository           _repo;
-    private readonly IWorkbookExporter         _exporter;
-    private readonly ISolidWorksFileOpener     _opener;
-    private readonly ILogger<MainViewModel>    _logger;
-    private readonly ILoggerFactory            _loggerFactory;
+    private readonly IPartRepository _repo;
+    private readonly IWorkbookExporter _exporter;
+    private readonly ISolidWorksFileOpener _opener;
+    private readonly ILogger<MainViewModel> _logger;
+    private readonly ILoggerFactory _loggerFactory;
 
     // ── Scan state ────────────────────────────────────────────────────────────
 
-    [ObservableProperty] private string  _statusText   = "Add folders and click Start Scan.";
-    [ObservableProperty] private double  _progressValue;
-    [ObservableProperty] private double  _progressMax  = 100;
-    [ObservableProperty] private bool    _isScanning;
-    [ObservableProperty] private bool    _canExport;
-    [ObservableProperty] private string  _scanStage    = "";
+    [ObservableProperty] private string _statusText = "Add folders and click Start Scan.";
+    [ObservableProperty] private double _progressValue;
+    [ObservableProperty] private double _progressMax = 100;
+    [ObservableProperty] private bool _isScanning;
+    [ObservableProperty] private bool _canExport;
+    [ObservableProperty] private string _scanStage = "";
 
     partial void OnCanExportChanged(bool value)
     {
@@ -48,11 +48,11 @@ public sealed partial class MainViewModel : ObservableObject
     private bool _hasScanned;
 
     // Cached result sets for export.
-    private IReadOnlyList<PartCluster>    _lastClusters = [];
-    private IReadOnlyList<ScannedFile>    _lastFiles    = [];
-    private IReadOnlyList<PartFingerprint> _lastFps     = [];
-    private IReadOnlyList<ClusterMember>  _lastMembers  = [];
-    private IReadOnlyList<CandidatePair>  _lastPairs    = [];
+    private IReadOnlyList<PartCluster> _lastClusters = [];
+    private IReadOnlyList<ScannedFile> _lastFiles = [];
+    private IReadOnlyList<PartFingerprint> _lastFps = [];
+    private IReadOnlyList<ClusterMember> _lastMembers = [];
+    private IReadOnlyList<CandidatePair> _lastPairs = [];
 
     // ── Folders ───────────────────────────────────────────────────────────────
 
@@ -93,12 +93,12 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ── Search & filter state ─────────────────────────────────────────────────
 
-    [ObservableProperty] private string?             _searchText;
+    [ObservableProperty] private string? _searchText;
     [ObservableProperty] private PartClassification? _classificationFilter;
-    [ObservableProperty] private ReviewStatus?       _reviewStatusFilter;
+    [ObservableProperty] private ReviewStatus? _reviewStatusFilter;
 
     [ObservableProperty] private ClassificationOption? _selectedClassificationOption;
-    [ObservableProperty] private ReviewStatusOption?   _selectedReviewStatusOption;
+    [ObservableProperty] private ReviewStatusOption? _selectedReviewStatusOption;
 
     partial void OnSearchTextChanged(string? value)
     {
@@ -145,8 +145,8 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ── Empty-state flags ─────────────────────────────────────────────────────
 
-    public bool ShowNoScanState          => !_hasScanned && !IsScanning;
-    public bool ShowNoMatchesState       => _hasScanned && _groups.Count == 0;
+    public bool ShowNoScanState => !_hasScanned && !IsScanning;
+    public bool ShowNoMatchesState => _hasScanned && _groups.Count == 0;
     public bool ShowNoFilterResultsState =>
         _hasScanned && _groups.Count > 0 && !FilteredGroups.Cast<object>().Any();
     public bool ShowEmptyState =>
@@ -163,24 +163,24 @@ public sealed partial class MainViewModel : ObservableObject
         ISolidWorksFileOpener opener,
         ILoggerFactory loggerFactory)
     {
-        _scanner       = scanner;
-        _repo          = repo;
-        _exporter      = exporter;
-        _opener        = opener;
+        _scanner = scanner;
+        _repo = repo;
+        _exporter = exporter;
+        _opener = opener;
         _loggerFactory = loggerFactory;
-        _logger        = loggerFactory.CreateLogger<MainViewModel>();
+        _logger = loggerFactory.CreateLogger<MainViewModel>();
 
         _searchDebounce = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
         _searchDebounce.Tick += (_, _) =>
         {
             _searchDebounce.Stop();
             ClassificationFilter = SelectedClassificationOption?.Value;
-            ReviewStatusFilter   = SelectedReviewStatusOption?.Value;
+            ReviewStatusFilter = SelectedReviewStatusOption?.Value;
             RefreshFilter();
         };
 
         _selectedClassificationOption = ClassificationOptions[0];
-        _selectedReviewStatusOption   = ReviewStatusOptions[0];
+        _selectedReviewStatusOption = ReviewStatusOptions[0];
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -192,7 +192,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var dialog = new System.Windows.Forms.FolderBrowserDialog
         {
-            Description            = "Select a folder containing .SLDPRT or .STEP/.STP files",
+            Description = "Select a folder containing .SLDPRT or .STEP/.STP files",
             UseDescriptionForTitle = true
         };
         if (dialog.ShowDialog() == System.Windows.Forms.DialogResult.OK)
@@ -217,16 +217,16 @@ public sealed partial class MainViewModel : ObservableObject
         }
 
         IsScanning = true;
-        CanExport  = false;
+        CanExport = false;
         _groups.Clear();
-        _cts        = new CancellationTokenSource();
+        _cts = new CancellationTokenSource();
         _hasScanned = false;
         OnPropertyChanged(nameof(ShowNoScanState));
         OnPropertyChanged(nameof(ShowEmptyState));
 
         var progress = new Progress<ScanProgress>(p =>
         {
-            ScanStage  = p.Stage;
+            ScanStage = p.Stage;
             StatusText = $"[{p.Stage}] {p.Detail}";
             if (p.Total > 0) { ProgressMax = p.Total; ProgressValue = p.Current; }
         });
@@ -238,12 +238,12 @@ public sealed partial class MainViewModel : ObservableObject
 
             await LoadGroupsAsync(_lastRun.Id);
 
-            var visibleCount  = FilteredGroups.Cast<object>().Count();
+            var visibleCount = FilteredGroups.Cast<object>().Count();
             var distinctCount = _groups.Count - visibleCount;
             StatusText = distinctCount > 0
                 ? $"Scan complete — {visibleCount} match group{(visibleCount == 1 ? "" : "s")} found ({distinctCount} confirmed distinct, hidden)."
                 : $"Scan complete — {visibleCount} match group{(visibleCount == 1 ? "" : "s")} found.";
-            CanExport   = true;
+            CanExport = true;
             _hasScanned = true;
         }
         catch (OperationCanceledException)
@@ -276,13 +276,13 @@ public sealed partial class MainViewModel : ObservableObject
 
     private async Task LoadGroupsAsync(Guid scanRunId)
     {
-        var clusters     = await _repo.GetClustersAsync(scanRunId, CancellationToken.None);
-        var files        = await _repo.GetAllScannedFilesAsync(scanRunId, CancellationToken.None);
+        var clusters = await _repo.GetClustersAsync(scanRunId, CancellationToken.None);
+        var files = await _repo.GetAllScannedFilesAsync(scanRunId, CancellationToken.None);
         var fingerprints = await _repo.GetAllFingerprintsAsync(scanRunId, CancellationToken.None);
-        var pairs        = await _repo.GetCandidatePairsAsync(scanRunId, CancellationToken.None);
+        var pairs = await _repo.GetCandidatePairsAsync(scanRunId, CancellationToken.None);
 
         var fileById = files.ToDictionary(f => f.Id);
-        var fpById   = fingerprints.ToDictionary(f => f.Id);
+        var fpById = fingerprints.ToDictionary(f => f.Id);
 
         var allMembers = new List<ClusterMember>();
         foreach (var cluster in clusters)
@@ -294,10 +294,10 @@ public sealed partial class MainViewModel : ObservableObject
             .ToDictionary(g => g.Key, g => (IReadOnlyList<ClusterMember>)g.ToList());
 
         _lastClusters = clusters;
-        _lastFiles    = files;
-        _lastFps      = fingerprints;
-        _lastMembers  = allMembers;
-        _lastPairs    = pairs;
+        _lastFiles = files;
+        _lastFps = fingerprints;
+        _lastMembers = allMembers;
+        _lastPairs = pairs;
 
         var sorted = clusters
             .OrderBy(c => c.CanonicalName, StringComparer.OrdinalIgnoreCase)
@@ -307,9 +307,9 @@ public sealed partial class MainViewModel : ObservableObject
         _groups.Clear();
         for (int i = 0; i < sorted.Count; i++)
         {
-            var cluster     = sorted[i];
+            var cluster = sorted[i];
             var displayName = $"Match {i + 1}";
-            var members     = membersByCluster.GetValueOrDefault(cluster.Id, []);
+            var members = membersByCluster.GetValueOrDefault(cluster.Id, []);
 
             var fileVms = members
                 .Select(m =>
@@ -357,22 +357,22 @@ public sealed partial class MainViewModel : ObservableObject
         SearchText = "";
         _searchDebounce.Stop();
         SelectedClassificationOption = ClassificationOptions[0];
-        SelectedReviewStatusOption   = ReviewStatusOptions[0];
-        ClassificationFilter         = null;
-        ReviewStatusFilter           = null;
+        SelectedReviewStatusOption = ReviewStatusOptions[0];
+        ClassificationFilter = null;
+        ReviewStatusFilter = null;
 
         // Clear all loaded scan data — returns to fresh-open state.
         _groups.Clear();
         _lastClusters = [];
-        _lastFiles    = [];
-        _lastFps      = [];
-        _lastMembers  = [];
-        _lastPairs    = [];
-        _lastRun      = null;
-        _hasScanned   = false;
-        CanExport     = false;
-        StatusText    = "Add folders and click Start Scan.";
-        ScanStage     = "";
+        _lastFiles = [];
+        _lastFps = [];
+        _lastMembers = [];
+        _lastPairs = [];
+        _lastRun = null;
+        _hasScanned = false;
+        CanExport = false;
+        StatusText = "Add folders and click Start Scan.";
+        ScanStage = "";
 
         RefreshFilter();
         OnPropertyChanged(nameof(ShowNoScanState));
@@ -438,9 +438,9 @@ public sealed partial class MainViewModel : ObservableObject
             var ctx = BuildExportContext(
                 visibleClusters,
                 visibleMembers,
-                _lastFiles.Where(f  => visibleFileIds.Contains(f.Id)).ToList(),
-                _lastFps.Where(fp   => visibleFpIds.Contains(fp.Id)).ToList(),
-                _lastPairs.Where(p  =>
+                _lastFiles.Where(f => visibleFileIds.Contains(f.Id)).ToList(),
+                _lastFps.Where(fp => visibleFpIds.Contains(fp.Id)).ToList(),
+                _lastPairs.Where(p =>
                     visibleFpIds.Contains(p.FingerprintAId) ||
                     visibleFpIds.Contains(p.FingerprintBId)).ToList());
 
@@ -455,24 +455,24 @@ public sealed partial class MainViewModel : ObservableObject
     }
 
     private ExportContext BuildExportContext(
-        IReadOnlyList<PartCluster>   clusters,
+        IReadOnlyList<PartCluster> clusters,
         IReadOnlyList<ClusterMember> members,
-        IReadOnlyList<ScannedFile>?    files = null,
-        IReadOnlyList<PartFingerprint>? fps  = null,
-        IReadOnlyList<CandidatePair>?  pairs = null)
+        IReadOnlyList<ScannedFile>? files = null,
+        IReadOnlyList<PartFingerprint>? fps = null,
+        IReadOnlyList<CandidatePair>? pairs = null)
         => new(_lastRun!,
-               files  ?? _lastFiles,
-               fps    ?? _lastFps,
+               files ?? _lastFiles,
+               fps ?? _lastFps,
                clusters,
                members,
-               pairs  ?? _lastPairs);
+               pairs ?? _lastPairs);
 
     private static string? PromptForSavePath()
     {
         var dlg = new Microsoft.Win32.SaveFileDialog
         {
-            Title    = "Export Excel Workbook",
-            Filter   = "Excel Workbook (*.xlsx)|*.xlsx",
+            Title = "Export Excel Workbook",
+            Filter = "Excel Workbook (*.xlsx)|*.xlsx",
             FileName = $"PartMatcher_{DateTime.Now:yyyyMMdd_HHmmss}.xlsx"
         };
         return dlg.ShowDialog() == true ? dlg.FileName : null;

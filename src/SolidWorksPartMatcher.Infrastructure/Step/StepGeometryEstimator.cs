@@ -16,11 +16,11 @@ internal static class StepGeometryEstimator
         return type switch
         {
             "CYLINDRICAL_SURFACE" => BuildCylinderDescriptor(reader, surfId),
-            "PLANE"               => BuildPlaneDescriptor(reader, surfId),
-            "CONICAL_SURFACE"     => BuildConeDescriptor(reader, surfId),
-            "SPHERICAL_SURFACE"   => BuildSphereDescriptor(reader, surfId),
-            "TOROIDAL_SURFACE"    => BuildTorusDescriptor(reader, surfId),
-            _                     => $"OTHER|{type}"
+            "PLANE" => BuildPlaneDescriptor(reader, surfId),
+            "CONICAL_SURFACE" => BuildConeDescriptor(reader, surfId),
+            "SPHERICAL_SURFACE" => BuildSphereDescriptor(reader, surfId),
+            "TOROIDAL_SURFACE" => BuildTorusDescriptor(reader, surfId),
+            _ => $"OTHER|{type}"
         };
     }
 
@@ -92,9 +92,9 @@ internal static class StepGeometryEstimator
         foreach (var p in points)
         {
             if (p.Length < 3) continue;
-            if (p[0] < minX) minX = p[0];  if (p[0] > maxX) maxX = p[0];
-            if (p[1] < minY) minY = p[1];  if (p[1] > maxY) maxY = p[1];
-            if (p[2] < minZ) minZ = p[2];  if (p[2] > maxZ) maxZ = p[2];
+            if (p[0] < minX) minX = p[0]; if (p[0] > maxX) maxX = p[0];
+            if (p[1] < minY) minY = p[1]; if (p[1] > maxY) maxY = p[1];
+            if (p[2] < minZ) minZ = p[2]; if (p[2] > maxZ) maxZ = p[2];
         }
 
         var bb = new[] { maxX - minX, maxY - minY, maxZ - minZ };
@@ -193,38 +193,38 @@ internal static class StepGeometryEstimator
             if (off < 1e-14) break;
 
             for (int p = 0; p < 2; p++)
-            for (int q = p + 1; q < 3; q++)
-            {
-                double apq = a[p, q];
-                if (Math.Abs(apq) < 1e-15) continue;
-
-                double app = a[p, p], aqq = a[q, q];
-                double theta = (aqq - app) / (2 * apq);
-                double t = (theta >= 0 ? 1.0 : -1.0) / (Math.Abs(theta) + Math.Sqrt(theta * theta + 1));
-                double c = 1 / Math.Sqrt(t * t + 1);
-                double s = t * c;
-
-                a[p, p] = app - t * apq;
-                a[q, q] = aqq + t * apq;
-                a[p, q] = 0; a[q, p] = 0;
-
-                for (int k = 0; k < 3; k++)
+                for (int q = p + 1; q < 3; q++)
                 {
-                    if (k == p || k == q) continue;
-                    double akp = a[k, p], akq = a[k, q];
-                    double newAkp = c * akp - s * akq;
-                    double newAkq = s * akp + c * akq;
-                    a[k, p] = newAkp; a[p, k] = newAkp;
-                    a[k, q] = newAkq; a[q, k] = newAkq;
-                }
+                    double apq = a[p, q];
+                    if (Math.Abs(apq) < 1e-15) continue;
 
-                for (int k = 0; k < 3; k++)
-                {
-                    double vkp = v[k, p], vkq = v[k, q];
-                    v[k, p] = c * vkp - s * vkq;
-                    v[k, q] = s * vkp + c * vkq;
+                    double app = a[p, p], aqq = a[q, q];
+                    double theta = (aqq - app) / (2 * apq);
+                    double t = (theta >= 0 ? 1.0 : -1.0) / (Math.Abs(theta) + Math.Sqrt(theta * theta + 1));
+                    double c = 1 / Math.Sqrt(t * t + 1);
+                    double s = t * c;
+
+                    a[p, p] = app - t * apq;
+                    a[q, q] = aqq + t * apq;
+                    a[p, q] = 0; a[q, p] = 0;
+
+                    for (int k = 0; k < 3; k++)
+                    {
+                        if (k == p || k == q) continue;
+                        double akp = a[k, p], akq = a[k, q];
+                        double newAkp = c * akp - s * akq;
+                        double newAkq = s * akp + c * akq;
+                        a[k, p] = newAkp; a[p, k] = newAkp;
+                        a[k, q] = newAkq; a[q, k] = newAkq;
+                    }
+
+                    for (int k = 0; k < 3; k++)
+                    {
+                        double vkp = v[k, p], vkq = v[k, q];
+                        v[k, p] = c * vkp - s * vkq;
+                        v[k, q] = s * vkp + c * vkq;
+                    }
                 }
-            }
         }
 
         return (
@@ -244,7 +244,7 @@ internal static class StepGeometryEstimator
         double[] sortedBB)
     {
         var cylinders = faces.Where(f => reader.GetEntityType(f.SurfaceId) == "CYLINDRICAL_SURFACE").ToList();
-        var planes    = faces.Where(f => reader.GetEntityType(f.SurfaceId) == "PLANE").ToList();
+        var planes = faces.Where(f => reader.GetEntityType(f.SurfaceId) == "PLANE").ToList();
 
         // Simple extruded cylinder: exactly 1 unique cylinder radius + 2 plane caps
         if (cylinders.Count == 2 && planes.Count == 2)
@@ -279,7 +279,7 @@ internal static class StepGeometryEstimator
         double[] sortedBB)
     {
         var cylinders = faces.Where(f => reader.GetEntityType(f.SurfaceId) == "CYLINDRICAL_SURFACE").ToList();
-        var planes    = faces.Where(f => reader.GetEntityType(f.SurfaceId) == "PLANE").ToList();
+        var planes = faces.Where(f => reader.GetEntityType(f.SurfaceId) == "PLANE").ToList();
 
         if (cylinders.Count >= 2 && planes.Count >= 2 && points.Count > 0)
         {

@@ -30,7 +30,7 @@ public partial class App : System.Windows.Application
     {
         // Catch unhandled exceptions from any source before we have a window.
         AppDomain.CurrentDomain.UnhandledException += OnUnhandledException;
-        DispatcherUnhandledException               += OnDispatcherUnhandledException;
+        DispatcherUnhandledException += OnDispatcherUnhandledException;
 
         base.OnStartup(e);
 
@@ -39,7 +39,7 @@ public partial class App : System.Windows.Application
             var logDir = LogDir;
             Directory.CreateDirectory(logDir);
 
-            var dbPath  = Path.Combine(logDir, "partmatcher.db");
+            var dbPath = Path.Combine(logDir, "partmatcher.db");
             var logPath = Path.Combine(logDir, "app.log");
 
             var services = new ServiceCollection();

@@ -24,4 +24,11 @@ public sealed record AssemblyComponent(
     IReadOnlyList<string> FaceGeometricSignature,
     // Full transitive P21 entity-id closure backing this component's shape — reused by
     // StepComponentSnippetWriter so it never needs recomputing for 3D-diff drill-down.
-    IReadOnlyList<int> EntityClosure);
+    IReadOnlyList<int> EntityClosure,
+    // Fully-composed (root-frame) 3D position of every occurrence of this product across the
+    // whole assembly tree — one entry per instance, position only (orientation is deliberately
+    // out of scope). Composed through every ancestor sub-assembly's transform, so a part that
+    // moved because its containing sub-assembly moved is captured. Empty when no occurrence's
+    // transform chain could be resolved. Compared as an unordered set between two assembly
+    // versions (see OccurrencePositionComparer) — never matched by index or persistent id.
+    IReadOnlyList<double[]> OccurrencePositionsM);

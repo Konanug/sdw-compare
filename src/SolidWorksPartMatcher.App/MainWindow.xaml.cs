@@ -28,7 +28,7 @@ public partial class MainWindow : Window
         {
             menu.PlacementTarget = btn;
             menu.Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom;
-            menu.IsOpen    = true;
+            menu.IsOpen = true;
         }
         e.Handled = true;
     }
