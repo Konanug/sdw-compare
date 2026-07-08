@@ -103,6 +103,7 @@ public sealed class ScanOrchestrationService(
             var templateBySha = new Dictionary<string, PartFingerprint>();
             var shasDone = 0;
 
+            int cacheHits = 0;
             foreach (var (sha, group) in bySha)
             {
                 cancellationToken.ThrowIfCancellationRequested();
@@ -112,7 +113,22 @@ public sealed class ScanOrchestrationService(
                     bool isStep = IsStepFile(file.NormalizedPath);
                     PartFingerprint? template;
 
-                    if (isStep && stepExtractor != null)
+                    // Cache lookup first — keyed on (SHA, config, extractor version). A hit reuses
+                    // geometry from a prior scan without re-opening the file (the dominant cost for
+                    // SLDPRT via SolidWorks). Safe because identical bytes + same extractor version
+                    // deterministically produce the same fingerprint; a version bump misses and
+                    // re-extracts. The reused template's ids are remapped per-file below, exactly
+                    // as freshly-extracted ones are.
+                    int extractorVersion = (isStep && stepExtractor != null)
+                        ? StepGeometryExtractor.Version
+                        : extractor.ExtractorVersion;
+                    template = await repo.GetFingerprintAsync(sha, "Default", extractorVersion, cancellationToken);
+
+                    if (template != null)
+                    {
+                        cacheHits++;
+                    }
+                    else if (isStep && stepExtractor != null)
                     {
                         // Pure C# path: parse P21 directly — no SolidWorks COM needed for STEP.
                         template = stepExtractor.Extract(file);
@@ -150,8 +166,8 @@ public sealed class ScanOrchestrationService(
                 await repo.UpsertFingerprintAsync(fp, cancellationToken);
             }
 
-            logger.LogInformation("Stored {Count} fingerprints ({Unique} unique geometries)",
-                fingerprints.Count, templateBySha.Count);
+            logger.LogInformation("Stored {Count} fingerprints ({Unique} unique geometries, {Hits} reused from cache)",
+                fingerprints.Count, templateBySha.Count, cacheHits);
 
             // Stage 2: Candidate blocking
             Report(progress, "Blocking", "Generating candidates…", 0, 0);
@@ -260,24 +276,17 @@ public sealed class ScanOrchestrationService(
                     && !hasHoleWizardConflict && cls != PartClassification.EngravingVariant
                     && !hasAnyStep && score >= 0.85)
                 {
-                    try
-                    {
-                        var bodyResult = await bodyChecker.CheckAsync(
-                            sfA, fpA.ConfigName, sfB, fpB.ConfigName, cancellationToken);
+                    var bodyResult = await WithComRetryAsync(
+                        () => bodyChecker.CheckAsync(sfA, fpA.ConfigName, sfB, fpB.ConfigName, cancellationToken),
+                        $"Stage 4 body check {sfA.FileName}↔{sfB.FileName}", cancellationToken);
 
-                        if (bodyResult.Classification != PartClassification.ComparisonFailed)
-                        {
-                            cls = bodyResult.Classification;
-                            reason = bodyResult.Reason;
-                            comparatorVersion = "body-coincidence-1";
-                            logger.LogDebug("Stage 4 result for {A}↔{B}: {Cls} (det={D})",
-                                sfA.FileName, sfB.FileName, cls, bodyResult.TransformDeterminant);
-                        }
-                    }
-                    catch (Exception ex)
+                    if (bodyResult != null && bodyResult.Classification != PartClassification.ComparisonFailed)
                     {
-                        logger.LogWarning(ex, "Stage 4 body check threw for {A}↔{B} — keeping coarse classification",
-                            sfA.FileName, sfB.FileName);
+                        cls = bodyResult.Classification;
+                        reason = bodyResult.Reason;
+                        comparatorVersion = "body-coincidence-1";
+                        logger.LogDebug("Stage 4 result for {A}↔{B}: {Cls} (det={D})",
+                            sfA.FileName, sfB.FileName, cls, bodyResult.TransformDeterminant);
                     }
                 }
 
@@ -293,26 +302,18 @@ public sealed class ScanOrchestrationService(
                     && cls != PartClassification.EngravingVariant
                     && !hasAnyStep && stage4Inconclusive && score >= 0.75)
                 {
-                    try
-                    {
-                        const double toleranceM = 0.0005; // 0.5 mm
-                        var tessResult = await tessellationComparator.CompareAsync(
-                            sfA, fpA, sfB, fpB, toleranceM, cancellationToken);
+                    const double toleranceM = 0.0005; // 0.5 mm
+                    var tessResult = await WithComRetryAsync(
+                        () => tessellationComparator.CompareAsync(sfA, fpA, sfB, fpB, toleranceM, cancellationToken),
+                        $"Stage 4.5 tessellation {sfA.FileName}↔{sfB.FileName}", cancellationToken);
 
-                        if (tessResult.Classification != PartClassification.ComparisonFailed)
-                        {
-                            cls = tessResult.Classification;
-                            reason = tessResult.Reason;
-                            comparatorVersion = "tessellation-hd95-1";
-                            logger.LogDebug("Stage 4.5 result for {A}↔{B}: {Cls}",
-                                sfA.FileName, sfB.FileName, cls);
-                        }
-                    }
-                    catch (Exception ex)
+                    if (tessResult != null && tessResult.Classification != PartClassification.ComparisonFailed)
                     {
-                        logger.LogWarning(ex,
-                            "Stage 4.5 tessellation comparison threw for {A}↔{B} — keeping prior classification",
-                            sfA.FileName, sfB.FileName);
+                        cls = tessResult.Classification;
+                        reason = tessResult.Reason;
+                        comparatorVersion = "tessellation-hd95-1";
+                        logger.LogDebug("Stage 4.5 result for {A}↔{B}: {Cls}",
+                            sfA.FileName, sfB.FileName, cls);
                     }
                 }
 
@@ -332,25 +333,17 @@ public sealed class ScanOrchestrationService(
                     && cls == PartClassification.PossibleMatch && !isBinaryDup
                     && !hasHoleWizardConflict && !hasAnyStep && score >= 0.70)
                 {
-                    try
-                    {
-                        var detail = await geometryComparator.CompareAsync(
-                            sfA, fpA, sfB, fpB, cancellationToken);
+                    var detail = await WithComRetryAsync(
+                        () => geometryComparator.CompareAsync(sfA, fpA, sfB, fpB, cancellationToken),
+                        $"Stage 5 volumetric {sfA.FileName}↔{sfB.FileName}", cancellationToken);
 
-                        if (detail.Classification != PartClassification.ComparisonFailed)
-                        {
-                            cls = detail.Classification;
-                            reason = detail.Reason;
-                            comparatorVersion = "volumetric-jaccard-1";
-                            logger.LogDebug("Stage 5 result for {A}↔{B}: {Cls} (J={J:F3})",
-                                sfA.FileName, sfB.FileName, cls, detail.JaccardSimilarity);
-                        }
-                    }
-                    catch (Exception ex)
+                    if (detail != null && detail.Classification != PartClassification.ComparisonFailed)
                     {
-                        logger.LogWarning(ex,
-                            "Stage 5 volumetric comparison threw for {A}↔{B} — keeping prior classification",
-                            sfA.FileName, sfB.FileName);
+                        cls = detail.Classification;
+                        reason = detail.Reason;
+                        comparatorVersion = "volumetric-jaccard-1";
+                        logger.LogDebug("Stage 5 result for {A}↔{B}: {Cls} (J={J:F3})",
+                            sfA.FileName, sfB.FileName, cls, detail.JaccardSimilarity);
                     }
                 }
 
@@ -540,8 +533,20 @@ public sealed class ScanOrchestrationService(
     internal static readonly HashSet<string> MirrorFeatureTypes =
         new(StringComparer.OrdinalIgnoreCase) { "MirrorSolid", "Mirror", "BodyMirror" };
 
+    // A feature is a mirror indicator if it is one of the canonical names above OR its type name
+    // simply contains "mirror" (case-insensitive). The substring catch-all makes recognition
+    // consistent across SW mirror-feature variants whose exact GetTypeName2 string we haven't
+    // enumerated (e.g. "MirrorPattern", "MirrorComponent", "ImportedMirror"): a feature literally
+    // named with "mirror" is a mirror operation, and ordinary features (Extrude/Cut/Fillet/…) never
+    // contain the word — so this widens true-positive coverage without adding false positives.
+    // This is why one mirrored part could be missed while similar ones were caught: its mirror
+    // feature carried a name outside the fixed three-item set, so the histogram heuristic never
+    // fired and the pair fell through to the geometric stages (where a near-symmetric part can
+    // legitimately read as an exact match).
     internal static bool HasMirrorFeature(IReadOnlyDictionary<string, int> histogram)
-        => histogram.Keys.Any(k => MirrorFeatureTypes.Contains(k));
+        => histogram.Keys.Any(k =>
+            MirrorFeatureTypes.Contains(k)
+            || k.Contains("mirror", StringComparison.OrdinalIgnoreCase));
 
     internal static (bool IsEngravingVariant, string? Reason)
         DetectEngravingVariantBySuppressedGeometry(PartFingerprint a, PartFingerprint b)
@@ -636,6 +641,42 @@ public sealed class ScanOrchestrationService(
         var ext = Path.GetExtension(path);
         return string.Equals(ext, ".step", StringComparison.OrdinalIgnoreCase)
             || string.Equals(ext, ".stp", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Bounded retry for the SolidWorks-COM comparison stages (4 / 4.5 / 5). A transient COM
+    // failure would otherwise be caught and silently drop the pair back to its coarse
+    // classification, which is a source of run-to-run nondeterminism: a match confirmed in one
+    // scan can disappear in the next purely because a COM call happened to throw. Retrying once
+    // before giving up makes that far less likely without changing the result on success or the
+    // safe fallback on genuine failure (null → caller keeps the prior classification, exactly as
+    // the previous catch block did). Cancellation is never retried.
+    private async Task<T?> WithComRetryAsync<T>(Func<Task<T>> op, string label, CancellationToken ct)
+        where T : class
+    {
+        const int maxAttempts = 2;
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            ct.ThrowIfCancellationRequested();
+            try
+            {
+                return await op();
+            }
+            catch (OperationCanceledException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                if (attempt >= maxAttempts)
+                {
+                    logger.LogWarning(ex, "{Label} failed after {Attempts} attempts — keeping prior classification",
+                        label, maxAttempts);
+                    return null;
+                }
+                logger.LogWarning(ex, "{Label} attempt {Attempt}/{Max} threw — retrying", label, attempt, maxAttempts);
+            }
+        }
+        return null;
     }
 
     private static void Report(IProgress<ScanProgress>? p, string stage, string detail, int cur, int total)

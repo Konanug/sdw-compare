@@ -50,7 +50,11 @@
                     <Button Content="Add Folder"  Command="{Binding AddFolderCommand}" Style="{StaticResource ActionBtn}"/>
                     <Button Content="Remove"      Style="{StaticResource ActionBtn}"
                             Command="{Binding RemoveFolderCommand}"
-                            CommandParameter="{Binding ElementName=FolderList, Path=SelectedItem}"/>
+                            CommandParameter="{Binding ElementName=FolderList, Path=SelectedItem}"
+                            ToolTip="Remove the selected folder"/>
+                    <Button Content="Remove All"  Style="{StaticResource ActionBtn}"
+                            Command="{Binding RemoveAllFoldersCommand}"
+                            ToolTip="Remove every folder and clear results to start fresh"/>
                 </StackPanel>
                 <ListBox x:Name="FolderList" ItemsSource="{Binding FolderPaths}"
                          ScrollViewer.HorizontalScrollBarVisibility="Auto"

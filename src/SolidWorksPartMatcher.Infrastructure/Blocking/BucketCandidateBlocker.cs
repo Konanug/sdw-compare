@@ -29,7 +29,11 @@ public sealed class BucketCandidateBlocker : ICandidateBlocker
         var fpMap = fingerprints.ToDictionary(f => f.Id);
         var results = new List<(Guid, Guid, string[])>();
 
-        foreach (var (bucket, ids) in groups)
+        // Iterate buckets in a fixed (ordinal-sorted) order rather than Dictionary enumeration
+        // order, which is not guaranteed. This makes both the output order and the recorded
+        // MatchedBuckets label (the first bucket a pair is seen in) deterministic for a given input
+        // — without changing which candidate pairs are produced.
+        foreach (var (bucket, ids) in groups.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
             if (ids.Count < 2) continue;
             for (var i = 0; i < ids.Count; i++)
@@ -49,6 +53,15 @@ public sealed class BucketCandidateBlocker : ICandidateBlocker
                 }
             }
         }
+
+        // Final stable ordering by pair id so the candidate list is identical run-to-run for a
+        // given set of fingerprint ids (downstream cluster numbering/representative selection then
+        // depends only on the fingerprint ids themselves, not on hashing/enumeration order).
+        results.Sort((x, y) =>
+        {
+            int c = x.Item1.CompareTo(y.Item1);
+            return c != 0 ? c : x.Item2.CompareTo(y.Item2);
+        });
 
         return results;
     }

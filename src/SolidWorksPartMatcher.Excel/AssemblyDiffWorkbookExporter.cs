@@ -5,9 +5,29 @@ using SolidWorksPartMatcher.Domain.Models;
 
 namespace SolidWorksPartMatcher.Excel;
 
+/// <summary>
+/// Exports an assembly-diff report whose primary sheet ("Comparison") is a faithful, one-to-one
+/// mirror of the app's results grid: the same Changed/Unchanged grouping, the same Added / Removed
+/// / Suspicious status words, and the same Position / Quantity / Volume / Renamed signals shown as
+/// tick marks — so the workbook reads like an exported copy of what the user sees on screen, not a
+/// separate format. The per-category detail sheets (Modified / Added / Removed / Quantity Changed)
+/// follow as drill-down with the raw geometry numbers the grid surfaces only via its 3D view.
+///
+/// The row/grouping logic here is deliberately kept identical to
+/// <c>AssemblyComponentDiffRowViewModel</c> in the App project; the two must stay in sync.
+/// </summary>
 public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExporter> logger)
     : IAssemblyDiffReportExporter
 {
+    private const string Tick = "✓";
+
+    // App status/group colours (match AssemblyComponentDiffRowViewModel.StatusBrush exactly).
+    private const string ColAdded = "#E3F2FD";
+    private const string ColRemoved = "#FFEBEE";
+    private const string ColSuspicious = "#FFF3E0";
+    private const string ColChanged = "#FFF8E1";
+    private const string ColUnchanged = "#E8F5E9";
+
     public Task ExportAsync(AssemblyDiffSummary summary, string outputPath, CancellationToken ct)
     {
         logger.LogInformation("Exporting assembly diff report to {Path}", outputPath);
@@ -15,6 +35,7 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         using var wb = new XLWorkbook();
 
         AddSummarySheet(wb, summary);
+        AddComparisonSheet(wb, summary);   // primary sheet — mirrors the app's results grid
         AddModifiedPartsSheet(wb, summary);
         AddAddedPartsSheet(wb, summary);
         AddRemovedPartsSheet(wb, summary);
@@ -31,7 +52,63 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         return Task.CompletedTask;
     }
 
-    // ── Sheet 1: Summary ─────────────────────────────────────────────────────
+    // ── Row-level predicates — kept identical to the app's AssemblyComponentDiffRowViewModel ─────
+
+    private static bool IsTwoSided(AssemblyComponentDiff d) => d.ComponentA is not null && d.ComponentB is not null;
+    private static bool HasVolumeChange(AssemblyComponentDiff d) =>
+        IsTwoSided(d) && d.DiffType is AssemblyDiffType.Modified or AssemblyDiffType.SuspiciousMatch;
+    private static bool HasQuantityChange(AssemblyComponentDiff d) => d.QuantityChanged;
+    private static bool HasPositionChange(AssemblyComponentDiff d) => d.PositionChanged == true;
+    private static bool IsRenamed(AssemblyComponentDiff d) => IsTwoSided(d) && d.GeometricSimilarityScore is not null;
+    private static bool HasAnyChange(AssemblyComponentDiff d) =>
+        HasVolumeChange(d) || HasQuantityChange(d) || HasPositionChange(d);
+    private static bool IsUnchanged(AssemblyComponentDiff d) =>
+        d.DiffType == AssemblyDiffType.Unchanged && !HasAnyChange(d);
+    private static string GroupOf(AssemblyComponentDiff d) => IsUnchanged(d) ? "Unchanged" : "Changed";
+    private static int GroupRank(AssemblyComponentDiff d) => IsUnchanged(d) ? 1 : 0;
+
+    private static string StatusBadge(AssemblyComponentDiff d) => d.DiffType switch
+    {
+        AssemblyDiffType.Added => "Added",
+        AssemblyDiffType.Removed => "Removed",
+        AssemblyDiffType.SuspiciousMatch => "Suspicious",
+        _ => ""
+    };
+
+    private static string RowColour(AssemblyComponentDiff d) => d.DiffType switch
+    {
+        AssemblyDiffType.Added => ColAdded,
+        AssemblyDiffType.Removed => ColRemoved,
+        AssemblyDiffType.SuspiciousMatch => ColSuspicious,
+        _ => HasAnyChange(d) ? ColChanged : ColUnchanged
+    };
+
+    private static string VolumeDelta(AssemblyComponentDiff d) =>
+        d.VolumeDeltaPercent is { } v ? v.ToString("+0.00;-0.00;0") + "%" : "—";
+
+    private static string QuantityDetail(AssemblyComponentDiff d) =>
+        $"{d.InstanceCountA?.ToString() ?? "?"} → {d.InstanceCountB?.ToString() ?? "?"}";
+
+    // Same lines the grid's "Details" column shows (rename, quantity, volume), joined for one cell.
+    private static string DetailText(AssemblyComponentDiff d)
+    {
+        var lines = new List<string>();
+        if (IsRenamed(d))
+            lines.Add($"Renamed: {d.ComponentA?.MatchKey} → {d.ComponentB?.MatchKey}");
+        if (HasQuantityChange(d))
+            lines.Add($"Quantity: {d.InstanceCountA} → {d.InstanceCountB}");
+        if (HasVolumeChange(d) && d.VolumeDeltaPercent is { } v)
+            lines.Add($"Volume: {v.ToString("+0.##;-0.##;0")}%");
+        return string.Join("; ", lines);
+    }
+
+    // Same ordering the grid uses: Changed group first, then alphabetical by MatchKey.
+    private static IEnumerable<AssemblyComponentDiff> InGridOrder(AssemblyDiffSummary s) =>
+        s.Components
+            .OrderBy(GroupRank)
+            .ThenBy(c => c.MatchKey, StringComparer.Ordinal);
+
+    // ── Sheet 1: Summary (counts match the app's summary bar) ────────────────
 
     private static void AddSummarySheet(XLWorkbook wb, AssemblyDiffSummary summary)
     {
@@ -40,12 +117,17 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         ws.Cell(1, 2).Value = "Value";
         StyleHeader(ws, 1, 2);
 
-        int unchanged = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Unchanged);
-        int modified = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Modified);
+        // These mirror AssemblyDiffResultsViewModel's counts exactly (Changed collapses the former
+        // Modified / quantity-change / position-change categories, matching the grid).
+        int unchanged = summary.Components.Count(IsUnchanged);
+        int changed = summary.Components.Count(c =>
+            c.DiffType == AssemblyDiffType.Modified ||
+            (c.DiffType == AssemblyDiffType.Unchanged && HasAnyChange(c)));
         int added = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Added);
         int removed = summary.Components.Count(c => c.DiffType == AssemblyDiffType.Removed);
         int suspicious = summary.Components.Count(c => c.DiffType == AssemblyDiffType.SuspiciousMatch);
-        int qtyChanged = summary.Components.Count(c => c.QuantityChanged);
+        int qtyChanged = summary.Components.Count(HasQuantityChange);
+        int posChanged = summary.Components.Count(HasPositionChange);
 
         var kvs = new List<(string, string)>
         {
@@ -53,12 +135,13 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
             ("Assembly B",             summary.FileBPath),
             ("Compared",               summary.ComparedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm")),
             ("Total Components",       summary.Components.Count.ToString()),
+            ("  — Changed",            changed.ToString()),
             ("  — Unchanged",          unchanged.ToString()),
-            ("  — Modified",           modified.ToString()),
             ("  — Added",              added.ToString()),
             ("  — Removed",            removed.ToString()),
             ("  — Suspicious Match",   suspicious.ToString()),
             ("  — Quantity Changed",   qtyChanged.ToString()),
+            ("  — Position Changed",   posChanged.ToString()),
             ("Warnings",               summary.Warnings.Count.ToString()),
         };
 
@@ -86,15 +169,58 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         ws.Column(2).Width = 90;
     }
 
-    // ── Sheet 2: Modified Parts ──────────────────────────────────────────────
+    // ── Sheet 2: Comparison — the app's results grid, exported ───────────────
+
+    private static void AddComparisonSheet(XLWorkbook wb, AssemblyDiffSummary summary)
+    {
+        var ws = wb.Worksheets.Add("Comparison");
+        var headers = new[]
+        {
+            "Part", "Group", "Status", "Position", "Quantity", "Volume", "Renamed",
+            "Quantity (A→B)", "Volume Δ %", "Details"
+        };
+        WriteHeaders(ws, headers);
+
+        int row = 2;
+        foreach (var d in InGridOrder(summary))
+        {
+            ws.Cell(row, 1).Value = d.MatchKey;
+            ws.Cell(row, 2).Value = GroupOf(d);
+            ws.Cell(row, 3).Value = StatusBadge(d);
+            ws.Cell(row, 4).Value = HasPositionChange(d) ? Tick : "";
+            ws.Cell(row, 5).Value = HasQuantityChange(d) ? Tick : "";
+            ws.Cell(row, 6).Value = HasVolumeChange(d) ? Tick : "";
+            ws.Cell(row, 7).Value = IsRenamed(d) ? Tick : "";
+            ws.Cell(row, 8).Value = QuantityDetail(d);
+            ws.Cell(row, 9).Value = VolumeDelta(d);
+            ws.Cell(row, 10).Value = DetailText(d);
+
+            // Shade the row with the same colour the grid uses for this status.
+            ws.Range(row, 1, row, headers.Length).Style.Fill.BackgroundColor =
+                XLColor.FromHtml(RowColour(d));
+
+            // Centre the tick columns so blanks vs. ticks scan cleanly, like the grid.
+            ws.Range(row, 4, row, 7).Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+            row++;
+        }
+
+        // Manual filter/freeze (not a themed table) so the per-row status colours are preserved.
+        if (row > 2)
+            ws.Range(1, 1, row - 1, headers.Length).SetAutoFilter();
+        ws.SheetView.FreezeRows(1);
+        ws.Columns(1, headers.Length).AdjustToContents();
+        CapColumnWidths(ws, headers.Length, 60);
+    }
+
+    // ── Sheet 3: Modified Parts (drill-down detail) ──────────────────────────
 
     private static void AddModifiedPartsSheet(XLWorkbook wb, AssemblyDiffSummary summary)
     {
         var ws = wb.Worksheets.Add("Modified Parts");
         var headers = new[]
         {
-            "Part Name", "Volume Δ (cm³, %)", "Surface Area Δ (cm², %)", "Face Count Δ",
-            "Qty A", "Qty B", "Qty Changed?", "Match Basis", "Notes"
+            "Part Name", "Status", "Volume Δ (cm³, %)", "Surface Area Δ (cm², %)", "Face Count Δ",
+            "Qty A", "Qty B", "Qty Changed?", "Position Changed?", "Match Basis", "Notes"
         };
         WriteHeaders(ws, headers);
 
@@ -105,25 +231,27 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         {
             var a = d.ComponentA; var b = d.ComponentB;
             ws.Cell(row, 1).Value = d.MatchKey;
+            ws.Cell(row, 2).Value = d.DiffType == AssemblyDiffType.SuspiciousMatch ? "Suspicious" : "Modified";
 
             // 2 decimal places, not 1 — a genuine -99.98% delta rounding to a clean-looking
             // "-100.0%" misleadingly reads as "vanished entirely" rather than "very different".
             // This is the real (OCCT) volume — the sole classification signal; bounding box is
             // no longer computed or shown at all, since it produced skewed/false results.
             if (d.VolumeDeltaPercent is { } volPct && a is not null && b is not null)
-                ws.Cell(row, 2).Value =
+                ws.Cell(row, 3).Value =
                     $"{Math.Round((b.VolumeM3 - a.VolumeM3) * 1e6, 2)} ({Math.Round(volPct, 2)}%)";
             if (d.SurfaceAreaDeltaPercent is { } saPct && a is not null && b is not null)
-                ws.Cell(row, 3).Value =
+                ws.Cell(row, 4).Value =
                     $"{Math.Round((b.SurfaceAreaM2 - a.SurfaceAreaM2) * 1e4, 2)} ({Math.Round(saPct, 2)}%)";
             if (d.FaceCountDelta is { } faceDelta)
-                ws.Cell(row, 4).Value = faceDelta;
+                ws.Cell(row, 5).Value = faceDelta;
 
-            ws.Cell(row, 5).Value = d.InstanceCountA?.ToString() ?? "?";
-            ws.Cell(row, 6).Value = d.InstanceCountB?.ToString() ?? "?";
-            ws.Cell(row, 7).Value = d.QuantityChanged ? "Yes" : "No";
-            ws.Cell(row, 8).Value = d.GeometricSimilarityScore.HasValue ? "Geometry (rename)" : "Name";
-            ws.Cell(row, 9).Value = string.Join("; ", d.Reasons);
+            ws.Cell(row, 6).Value = d.InstanceCountA?.ToString() ?? "?";
+            ws.Cell(row, 7).Value = d.InstanceCountB?.ToString() ?? "?";
+            ws.Cell(row, 8).Value = d.QuantityChanged ? "Yes" : "No";
+            ws.Cell(row, 9).Value = d.PositionChanged switch { true => "Yes", false => "No", null => "—" };
+            ws.Cell(row, 10).Value = d.GeometricSimilarityScore.HasValue ? "Geometry (rename)" : "Name";
+            ws.Cell(row, 11).Value = string.Join("; ", d.Reasons);
 
             row++;
         }
@@ -131,7 +259,7 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         FormatAsTable(ws, "ModifiedParts", 1, row - 1, headers.Length);
     }
 
-    // ── Sheet 3: Added Parts ─────────────────────────────────────────────────
+    // ── Sheet 4: Added Parts ─────────────────────────────────────────────────
 
     private static void AddAddedPartsSheet(XLWorkbook wb, AssemblyDiffSummary summary)
         => AddOneSidedSheet(wb, "Added Parts", summary.Components
@@ -139,7 +267,7 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
             .OrderBy(c => c.MatchKey, StringComparer.Ordinal),
             c => (c.ComponentB!, c.InstanceCountB));
 
-    // ── Sheet 4: Removed Parts ───────────────────────────────────────────────
+    // ── Sheet 5: Removed Parts ───────────────────────────────────────────────
 
     private static void AddRemovedPartsSheet(XLWorkbook wb, AssemblyDiffSummary summary)
         => AddOneSidedSheet(wb, "Removed Parts", summary.Components
@@ -173,7 +301,7 @@ public sealed class AssemblyDiffWorkbookExporter(ILogger<AssemblyDiffWorkbookExp
         FormatAsTable(ws, sheetName.Replace(" ", ""), 1, row - 1, headers.Length);
     }
 
-    // ── Sheet 5: Quantity Changed (cross-cutting) ────────────────────────────
+    // ── Sheet 6: Quantity Changed (cross-cutting) ────────────────────────────
 
     private static void AddQuantityChangedSheet(XLWorkbook wb, AssemblyDiffSummary summary)
     {
