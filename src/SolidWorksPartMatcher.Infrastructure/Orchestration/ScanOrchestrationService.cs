@@ -562,13 +562,7 @@ public sealed class ScanOrchestrationService(
         }
 
         foreach (var p in pairs)
-            if (p.Classification is PartClassification.BinaryDuplicate
-                                 or PartClassification.ExactGeometryMatch
-                                 or PartClassification.GeometryMatchMetadataVariant
-                                 or PartClassification.EngravingVariant
-                                 or PartClassification.RevisionFamily
-                                 or PartClassification.MirrorOrHandedVariant
-                                 or PartClassification.PossibleMatch)
+            if (p.Classification.IsMatch())
                 Union(p.FingerprintAId, p.FingerprintBId);
 
         // Cluster IDs are the union-find roots chosen by UnionFindClusterBuilder.

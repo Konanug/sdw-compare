@@ -28,6 +28,10 @@ public static class MatchReasonAggregator
         var pairsByCluster = new Dictionary<Guid, List<CandidatePair>>();
         foreach (var pair in pairs)
         {
+            // Every candidate pair is persisted, including Distinct and ComparisonFailed ones. Two
+            // members of the same cluster can be joined transitively (A~B, B~C) while the A–C pair
+            // itself came out Distinct, so a reason is only evidence of a match if its pair is one.
+            if (!pair.Classification.IsMatch()) continue;
             if (string.IsNullOrWhiteSpace(pair.ClassificationReason)) continue;
 
             foreach (var clusterId in clustersByFingerprint[pair.FingerprintAId])
