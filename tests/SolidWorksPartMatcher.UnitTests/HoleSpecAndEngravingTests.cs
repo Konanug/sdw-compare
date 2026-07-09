@@ -71,6 +71,31 @@ public sealed class HoleSpecAndEngravingTests
         PartFeatureFacts.HasHoleWizard(Part(Features("Extrusion", "Cut", "Fillet"))).Should().BeFalse();
     }
 
+    [Theory]
+    [InlineData("Cut")]          // cut-extrude
+    [InlineData("SweptCut")]
+    [InlineData("CutRevolve")]
+    [InlineData("cut")]          // case-insensitive
+    public void HasPlainCutFeature_RecognisesCutFamilyFeatures(string typeName)
+    {
+        PartFeatureFacts.HasPlainCutFeature(Part(Features("Extrusion", typeName))).Should().BeTrue();
+    }
+
+    [Fact]
+    public void HasPlainCutFeature_False_WhenPartHasNoCutAtAll()
+    {
+        // The distinction that matters: a part with no cut features must never be reported as
+        // "uses a plain cut extrude".
+        PartFeatureFacts.HasPlainCutFeature(Part(Features("Extrusion", "Fillet"))).Should().BeFalse();
+    }
+
+    [Fact]
+    public void HasPlainCutFeature_False_ForHoleWizardOnly()
+    {
+        // "HoleWzd" contains no "cut", so a wizard-only part is not mistaken for a plain cut.
+        PartFeatureFacts.HasPlainCutFeature(Part(Features("Extrusion", "HoleWzd"))).Should().BeFalse();
+    }
+
     [Fact]
     public void EngravedTextCount_ReflectsSketchTextCutCount()
     {

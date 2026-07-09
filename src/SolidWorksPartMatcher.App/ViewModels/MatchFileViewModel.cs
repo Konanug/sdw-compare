@@ -25,11 +25,21 @@ public sealed partial class MatchFileViewModel : ObservableObject
     /// <summary>True when this part's hole was cut with the Hole Wizard rather than a plain cut extrude.</summary>
     public bool HasHoleWizard { get; }
 
+    /// <summary>True when this part has a plain (non-Hole-Wizard) cut feature.</summary>
+    public bool HasPlainCut { get; }
+
     public bool IsStepFile =>
         string.Equals(SourceFormat, "STEP", StringComparison.OrdinalIgnoreCase);
 
-    /// <summary>How this part's hole was modelled — only meaningful for SOLIDWORKS parts.</summary>
-    public string HoleSpecLabel => HasHoleWizard ? "Hole Wizard hole" : "plain cut extrude";
+    /// <summary>
+    /// How this part's cut was modelled — only meaningful for SOLIDWORKS parts. Three distinct
+    /// states: a part with no cut features at all must not be reported as using a plain cut extrude,
+    /// which is what a plain <c>HasHoleWizard ? … : …</c> would wrongly claim.
+    /// </summary>
+    public string HoleSpecLabel =>
+        HasHoleWizard ? "Hole Wizard hole"
+        : HasPlainCut ? "plain cut extrude"
+        : "no cut features";
 
     public string EngravingLabel =>
         EngravedTextCount > 0 ? $"{EngravedTextCount} engraved text feature(s)" : "none";
@@ -82,6 +92,7 @@ public sealed partial class MatchFileViewModel : ObservableObject
         VolumeM3 = fingerprint.VolumeM3;
         EngravedTextCount = PartFeatureFacts.EngravedTextCount(fingerprint);
         HasHoleWizard = PartFeatureFacts.HasHoleWizard(fingerprint);
+        HasPlainCut = PartFeatureFacts.HasPlainCutFeature(fingerprint);
         _opener = opener;
         _logger = logger;
 

@@ -299,8 +299,10 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         {
             lines.Add("");
             lines.Add("HOLE SPECIFICATION — these differ");
-            lines.AddRange(wizard.Select(f => $"   • {f.FileName} — Hole Wizard hole"));
-            lines.AddRange(plainCut.Select(f => $"   • {f.FileName} — plain cut extrude"));
+            // Use each part's own label: the non-wizard side may be a plain cut extrude, or may have
+            // no cut features at all — never assume the former.
+            lines.AddRange(wizard.Select(f => $"   • {f.FileName} — {f.HoleSpecLabel}"));
+            lines.AddRange(plainCut.Select(f => $"   • {f.FileName} — {f.HoleSpecLabel}"));
             lines.Add("");
             lines.Add("   The holes may sit in the same place, but they were modelled differently,");
             lines.Add("   so these count as different engineering specifications.");

@@ -13,10 +13,28 @@ public static class PartFeatureFacts
     /// </summary>
     public const string HoleWizardTypePrefix = "HoleWzd";
 
+    /// <summary>
+    /// SOLIDWORKS names every cut-style feature with "cut" in its <c>GetTypeName2()</c>
+    /// (cut-extrude, swept cut, revolved cut, …), while additive features (Extrusion, Fillet, …)
+    /// never do — and neither does a Hole Wizard feature, which uses the prefix above. Matching on
+    /// the fragment therefore recognises the family without hard-coding each individual type name.
+    /// </summary>
+    public const string CutFeatureNameFragment = "cut";
+
     /// <summary>True when the part contains at least one Hole Wizard feature.</summary>
     public static bool HasHoleWizard(PartFingerprint fp) =>
         fp.FeatureTypeHistogram.Keys.Any(
             k => k.StartsWith(HoleWizardTypePrefix, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// True when the part contains at least one plain (non-Hole-Wizard) cut feature. Note this means
+    /// "a cut exists", not "a hole exists" — a cut extrude may equally be a slot or a pocket. It is
+    /// used only to distinguish a part that was cut by hand from one with no cut features at all, so
+    /// the UI never claims a hole-less part "uses a plain cut extrude".
+    /// </summary>
+    public static bool HasPlainCutFeature(PartFingerprint fp) =>
+        fp.FeatureTypeHistogram.Keys.Any(
+            k => k.Contains(CutFeatureNameFragment, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// Number of engraved text features (sketch text driving a cut). 0 means no engraving.
