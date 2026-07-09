@@ -1,4 +1,4 @@
-; Inno Setup script for SolidWorks Part Matcher.
+; Inno Setup script for Tytle 3D Model Comparator.
 ;
 ; Requires Inno Setup 6.3.0 or later: the x64compatible architecture identifier used
 ; below was introduced in 6.3.0 and does not compile on 6.0-6.2.
@@ -22,15 +22,15 @@
   #error Inno Setup 6.3.0 or later is required (x64compatible was added in 6.3.0).
 #endif
 
-#define AppName "SolidWorks Part Matcher"
-#define AppPublisher "Alan"
-#define AppExeName "SolidWorksPartMatcher.App.exe"
+#define AppName "Tytle 3D Model Comparator"
+#define AppPublisher "Tytle"
+#define AppExeName "Tytle3DModelComparator.exe"
 
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
 #ifndef SourceDir
-  #define SourceDir "..\publish\SolidWorksPartMatcher-v" + AppVersion
+  #define SourceDir "..\publish\Tytle3DModelComparator-v" + AppVersion
 #endif
 
 [Setup]
@@ -45,7 +45,7 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 LicenseFile=..\LICENSE
 OutputDir=..\publish
-OutputBaseFilename=SolidWorksPartMatcher-Setup-v{#AppVersion}
+OutputBaseFilename=Tytle3DModelComparator-Setup-v{#AppVersion}
 SetupIconFile=
 Compression=lzma2/max
 SolidCompression=yes

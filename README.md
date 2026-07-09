@@ -1,4 +1,4 @@
-# SolidWorks Part Matcher
+# Tytle 3D Model Comparator
 
 A Windows desktop tool for CAD data hygiene. It answers two questions:
 
@@ -27,7 +27,7 @@ with `pyvista`, `vtk`, `build123d`, and `numpy`.
 
 ## Running it
 
-Unzip a release and run `SolidWorksPartMatcher.App.exe`. A launcher lets you pick Duplicate Detection
+Unzip a release and run `Tytle3DModelComparator.exe`. A launcher lets you pick Duplicate Detection
 or Assembly Comparison.
 
 From source:
@@ -55,7 +55,7 @@ tools\build_viewer.ps1   # once; needs Python + pyvista + build123d
 .\publish.ps1            # or: .\publish.ps1 -Version 1.2.0
 ```
 
-This writes `publish\SolidWorksPartMatcher-v<version>\` and a matching `.zip`.
+This writes `publish\Tytle3DModelComparator-v<version>\` and a matching `.zip`.
 
 `build_viewer.ps1` produces **both** bundled tools — `view_steps.exe` (3D viewer) and
 `compute_component_volume.exe` (real geometry volumes) — in one PyInstaller bundle, since they share
@@ -73,9 +73,9 @@ from the Start menu.
 .\installer\build_installer.ps1 -Version 1.2.0   # then wrap it
 ```
 
-That produces `publish\SolidWorksPartMatcher-Setup-v<version>.exe`. It installs per-user by default,
+That produces `publish\Tytle3DModelComparator-Setup-v<version>.exe`. It installs per-user by default,
 so there is no admin prompt; pass `/ALLUSERS` for a machine-wide install. Uninstalling removes
-everything, and the app's database and logs live in `%LOCALAPPDATA%\SolidWorksPartMatcher` rather
+everything, and the app's database and logs live in `%LOCALAPPDATA%\Tytle3DModelComparator` rather
 than in the install directory.
 
 Building the installer needs [Inno Setup 6.3 or later](https://jrsoftware.org/isinfo.php) — 6.3.0
@@ -130,6 +130,10 @@ tools/                                  Python geometry tools + packaging script
 
 Project references enforce the boundaries: `Domain` depends on nothing but the BCL.
 
+The projects and namespaces keep their original `SolidWorksPartMatcher.*` names. Those are internal
+identifiers; the shipped product is Tytle 3D Model Comparator, and the built executable is
+`Tytle3DModelComparator.exe`.
+
 ## Tests
 
 ```powershell
@@ -143,8 +147,8 @@ skip themselves when it isn't installed.
 
 - Windows only. The UI, the COM automation, and the packaging scripts are all Windows-specific.
 - Duplicate detection requires a licensed SOLIDWORKS 2024. There is no fallback for `.SLDPRT`.
-- A release is a folder, not a single file. The 3D viewer and accurate volumes need a bundled
-  OpenCASCADE runtime (a few hundred MB) that cannot be linked into a managed executable.
+- The 3D viewer and accurate volumes need a bundled OpenCASCADE runtime (a few hundred MB) that
+  cannot be linked into a managed executable. The installer hides this; the zip does not.
 - Out of scope by design: drawings, PDM, cloud, automatic file renaming, and AI-driven identity
   decisions. Nothing renames your source files.
 - Matching tolerances are conservative defaults and may need tuning for a given data set.
