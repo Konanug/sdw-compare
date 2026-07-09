@@ -17,7 +17,10 @@
     .\installer\build_installer.ps1 -Version 1.1.0
 
 .NOTES
-    Requires Inno Setup 6:  winget install --id JRSoftware.InnoSetup -e
+    Requires Inno Setup 6.3 or later:  winget install --id JRSoftware.InnoSetup -e
+
+    6.3.0 is the minimum because the .iss uses the x64compatible architecture
+    identifier, which older 6.x releases reject.
 #>
 param(
     [string]$Version = "1.1.0"
@@ -41,8 +44,13 @@ $isccCandidates = @(
 )
 $iscc = $isccCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if (-not $iscc) {
-    throw "Inno Setup 6 not found. Install it with:  winget install --id JRSoftware.InnoSetup -e"
+    throw "Inno Setup 6.3+ not found. Install it with:  winget install --id JRSoftware.InnoSetup -e"
 }
+
+# The .iss requires Inno Setup 6.3.0+ (it uses the x64compatible architecture identifier).
+# We deliberately do not check the version here: Inno Setup's binaries all report a file
+# version of 0.0.0.0, so there is nothing reliable to read. The .iss carries an #error guard
+# instead, which the preprocessor evaluates against its own version and reports immediately.
 
 if (-not (Test-Path $sourceDir)) {
     throw "Publish folder not found: $sourceDir`nRun  .\publish.ps1 -Version $Version  first."

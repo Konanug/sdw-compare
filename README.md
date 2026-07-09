@@ -78,7 +78,8 @@ so there is no admin prompt; pass `/ALLUSERS` for a machine-wide install. Uninst
 everything, and the app's database and logs live in `%LOCALAPPDATA%\SolidWorksPartMatcher` rather
 than in the install directory.
 
-Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+Building the installer needs [Inno Setup 6.3 or later](https://jrsoftware.org/isinfo.php) — 6.3.0
+introduced the `x64compatible` architecture identifier the script relies on:
 
 ```powershell
 winget install --id JRSoftware.InnoSetup -e

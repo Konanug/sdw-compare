@@ -1,5 +1,8 @@
 ; Inno Setup script for SolidWorks Part Matcher.
 ;
+; Requires Inno Setup 6.3.0 or later: the x64compatible architecture identifier used
+; below was introduced in 6.3.0 and does not compile on 6.0-6.2.
+;
 ; Build it with installer\build_installer.ps1 — do not run ISCC directly, as the
 ; script passes the version and source folder in via /D.
 ;
@@ -12,6 +15,12 @@
 ; machine-wide install, which elevates. Either is safe: the app writes its
 ; database and logs to %LOCALAPPDATA%\SolidWorksPartMatcher and never writes
 ; into its own install directory.
+
+; Fail with a clear message rather than a cryptic "invalid ArchitecturesAllowed value"
+; if someone compiles this with an Inno Setup older than 6.3.0.
+#if Ver < EncodeVer(6,3,0)
+  #error Inno Setup 6.3.0 or later is required (x64compatible was added in 6.3.0).
+#endif
 
 #define AppName "SolidWorks Part Matcher"
 #define AppPublisher "Alan"
@@ -43,6 +52,7 @@ SolidCompression=yes
 WizardStyle=modern
 
 ; 64-bit only, Windows 10 or later — same as the app itself.
+; x64compatible requires Inno Setup 6.3.0+ (guarded above).
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 MinVersion=10.0

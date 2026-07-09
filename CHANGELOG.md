@@ -8,7 +8,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 ### Added
 
 - **Windows installer.** `installer\build_installer.ps1` wraps a publish folder into a single
-  `SolidWorksPartMatcher-Setup-v<version>.exe` (Inno Setup). It installs per-user by default with no
+  `SolidWorksPartMatcher-Setup-v<version>.exe` (requires Inno Setup 6.3+). It installs per-user with no
   admin prompt, adds a Start-menu shortcut and an uninstaller, and keeps the bundled Python and
   OpenCASCADE runtime out of sight in the install directory. Requires no changes to the application:
   the installed layout matches the zip layout, which is what the tool locator already expects.
