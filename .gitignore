@@ -1,20 +1,31 @@
+# Build output
 bin/
 obj/
+publish/
+TestResults/
+
+# Bundled Python tools (rebuilt by tools/build_viewer.ps1)
+tools/build/
+tools/dist/
+
+# Visual Studio / editor
 .vs/
 *.user
 *.suo
 *.userprefs
-*.DS_Store
+.DS_Store
+
+# Local tool state and caches
+.claude/
+graphify-out/
+scratchpad/
+
+# Generated at runtime — never commit scan databases, reports, or logs
 *.db
 *.db-shm
 *.db-wal
 *.xlsx
-publish/
-.claude/
-TestResults/
 *.log
-tools/build/
-tools/dist/
+
+# Local CAD test data
 Test6/
-graphify-out/
-scratchpad/
