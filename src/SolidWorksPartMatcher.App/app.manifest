@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <assembly manifestVersion="1.0" xmlns="urn:schemas-microsoft-com:asm.v1">
-  <assemblyIdentity version="1.0.0.0" name="SolidWorksPartMatcher.App" type="win32"/>
+  <assemblyIdentity version="1.0.0.0" name="Tytle3DModelComparator" type="win32"/>
 
   <!--
     Declare Windows 10 and Windows 11 as supported OS versions.

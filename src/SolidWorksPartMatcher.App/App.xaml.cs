@@ -22,9 +22,11 @@ public partial class App : System.Windows.Application
 {
     public static IServiceProvider Services { get; private set; } = null!;
 
+    // Scan database and logs live here, never in the install directory, so the app works when
+    // installed read-only (e.g. under Program Files).
     private static string LogDir =>
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                     "SolidWorksPartMatcher");
+                     "Tytle3DModelComparator");
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -116,7 +118,7 @@ public partial class App : System.Windows.Application
         }
         catch { /* if we can't log, at least try the dialog */ }
 
-        var msg = $"SolidWorks Part Matcher encountered a fatal error and cannot continue.\r\n\r\n" +
+        var msg = $"Tytle 3D Model Comparator encountered a fatal error and cannot continue.\r\n\r\n" +
                   $"{ex.GetType().Name}: {ex.Message}\r\n\r\n" +
                   $"A full error log has been written to:\r\n" +
                   $"{Path.Combine(LogDir, "app.log")}";

@@ -30,7 +30,7 @@ public sealed class RollingFileLoggerProvider : ILoggerProvider
             AutoFlush = true
         };
 
-        _writer.WriteLine($"=== SolidWorks Part Matcher started {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
+        _writer.WriteLine($"=== Tytle 3D Model Comparator started {DateTime.Now:yyyy-MM-dd HH:mm:ss} ===");
     }
 
     public ILogger CreateLogger(string categoryName)

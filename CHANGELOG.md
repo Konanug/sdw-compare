@@ -5,6 +5,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 
 ## [Unreleased]
 
+### Changed
+
+- **Renamed to Tytle 3D Model Comparator.** The executable is now `Tytle3DModelComparator.exe`, and
+  the window titles, assembly metadata, installer, and packaging scripts follow. The projects and
+  namespaces keep their `SolidWorksPartMatcher.*` names, which are internal identifiers only.
+- The scan database and logs moved from `%LOCALAPPDATA%\SolidWorksPartMatcher` to
+  `%LOCALAPPDATA%\Tytle3DModelComparator`. Existing data is not migrated; a first run after upgrading
+  starts with an empty database. The old folder can be deleted.
+
 ### Added
 
 - **Windows installer.** `installer\build_installer.ps1` wraps a publish folder into a single
