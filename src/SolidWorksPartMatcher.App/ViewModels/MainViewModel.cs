@@ -353,6 +353,20 @@ public sealed partial class MainViewModel : ObservableObject
             var displayName = $"Match {i + 1}";
             var members = membersByCluster.GetValueOrDefault(cluster.Id, []);
 
+            // Why this group was declared a match: the distinct classification reasons of the pair
+            // comparisons among its members, strongest evidence first. Shown in the app so the user
+            // understands the basis for every match (SHA-256, exact geometry, mirror, STEP evidence
+            // vote, etc.), not just the label.
+            var memberFpIds = members.Select(m => m.FingerprintId).ToHashSet();
+            var reasons = pairs
+                .Where(p => memberFpIds.Contains(p.FingerprintAId) && memberFpIds.Contains(p.FingerprintBId))
+                .OrderByDescending(p => p.CoarseScore)
+                .Select(p => p.ClassificationReason)
+                .Where(r => !string.IsNullOrWhiteSpace(r))
+                .Select(r => r!)
+                .Distinct()
+                .ToList();
+
             var fileVms = members
                 .Select(m =>
                 {
@@ -370,7 +384,7 @@ public sealed partial class MainViewModel : ObservableObject
 
             _groups.Add(new MatchGroupViewModel(
                 cluster, displayName, fileVms, _repo,
-                _loggerFactory.CreateLogger<MatchGroupViewModel>()));
+                _loggerFactory.CreateLogger<MatchGroupViewModel>(), reasons));
         }
 
         RefreshFilter();

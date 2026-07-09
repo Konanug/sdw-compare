@@ -104,34 +104,64 @@ public sealed class ScanOrchestrationService(
             var shasDone = 0;
 
             int cacheHits = 0;
+
+            // Pass 1 — cache resolution. Cache key is (SHA, config, extractor version): a hit
+            // reuses geometry from a prior scan without re-opening the file (the dominant cost for
+            // SLDPRT via SolidWorks, and now avoids re-running OCCT for STEP volume). Safe because
+            // identical bytes + same extractor version deterministically produce the same
+            // fingerprint; a version bump misses and re-extracts. Reused templates' ids are
+            // remapped per-file below, exactly as freshly-extracted ones are.
+            var misses = new List<(string Sha, ScannedFile File, bool IsStep)>();
             foreach (var (sha, group) in bySha)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var file = group[0];
+                bool isStep = IsStepFile(file.NormalizedPath);
+                int extractorVersion = (isStep && stepExtractor != null)
+                    ? StepGeometryExtractor.Version
+                    : extractor.ExtractorVersion;
+
+                var cached = await repo.GetFingerprintAsync(sha, "Default", extractorVersion, cancellationToken);
+                if (cached != null)
+                {
+                    templateBySha[sha] = cached;
+                    cacheHits++;
+                    Report(progress, "Fingerprinting", file.FileName, ++shasDone, bySha.Count);
+                }
+                else
+                {
+                    misses.Add((sha, file, isStep));
+                }
+            }
+
+            // Pass 2 — real OCCT volumes for STEP misses, in one batched subprocess. Replaces the
+            // crude bounding-box estimate with a real CAD-kernel volume for the STEP fingerprint;
+            // degrades to the estimate (empty map) when the OCCT tool is absent.
+            var realStepVolByPath = new Dictionary<string, double>(StringComparer.Ordinal);
+            var stepMissPaths = misses
+                .Where(m => m.IsStep && stepExtractor != null)
+                .Select(m => m.File.NormalizedPath)
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            if (stepMissPaths.Count > 0)
+                realStepVolByPath = StepPartVolumeRefiner.Refine(
+                    stepMissPaths, msg => logger.LogInformation("STEP volume: {Msg}", msg));
+
+            // Pass 3 — extract the misses.
+            foreach (var (sha, file, isStep) in misses)
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 try
                 {
-                    var file = group[0];
-                    bool isStep = IsStepFile(file.NormalizedPath);
                     PartFingerprint? template;
-
-                    // Cache lookup first — keyed on (SHA, config, extractor version). A hit reuses
-                    // geometry from a prior scan without re-opening the file (the dominant cost for
-                    // SLDPRT via SolidWorks). Safe because identical bytes + same extractor version
-                    // deterministically produce the same fingerprint; a version bump misses and
-                    // re-extracts. The reused template's ids are remapped per-file below, exactly
-                    // as freshly-extracted ones are.
-                    int extractorVersion = (isStep && stepExtractor != null)
-                        ? StepGeometryExtractor.Version
-                        : extractor.ExtractorVersion;
-                    template = await repo.GetFingerprintAsync(sha, "Default", extractorVersion, cancellationToken);
-
-                    if (template != null)
-                    {
-                        cacheHits++;
-                    }
-                    else if (isStep && stepExtractor != null)
+                    if (isStep && stepExtractor != null)
                     {
                         // Pure C# path: parse P21 directly — no SolidWorks COM needed for STEP.
                         template = stepExtractor.Extract(file);
+                        // Override the estimated volume with the real OCCT volume when available.
+                        if (template != null
+                            && realStepVolByPath.TryGetValue(file.NormalizedPath, out var realVol))
+                            template = template with { VolumeM3 = realVol };
                     }
                     else if (isStep)
                     {
@@ -149,10 +179,9 @@ public sealed class ScanOrchestrationService(
                 }
                 catch (Exception ex)
                 {
-                    logger.LogError(ex, "Fingerprint extraction threw for {File} — skipping file",
-                        group[0].FileName);
+                    logger.LogError(ex, "Fingerprint extraction threw for {File} — skipping file", file.FileName);
                 }
-                Report(progress, "Fingerprinting", group[0].FileName, ++shasDone, bySha.Count);
+                Report(progress, "Fingerprinting", file.FileName, ++shasDone, bySha.Count);
             }
 
             // Create one fingerprint record per file (reuse template geometry for binary dups)
@@ -266,6 +295,29 @@ public sealed class ScanOrchestrationService(
                     comparatorVersion = "face-sig-1";
                     logger.LogDebug("Stage 3.5 face-sig result for {A}↔{B}: {Cls}",
                         sfA?.FileName, sfB?.FileName, cls);
+                }
+
+                // Stage 3.6: STEP-only geometric-evidence vote. When the exact face-signature match
+                // above leaves a STEP-STEP pair as PossibleMatch or Distinct (e.g. radii differ by
+                // export noise), count orientation-invariant signals — real volume, face count,
+                // face-type histogram, tolerant signature. If enough agree, escalate to
+                // PossibleMatch so a human reviews it, with the agreeing signals spelled out in the
+                // reason. It only raises review recall: never a confirmed/auto-merged match, never a
+                // downgrade of an exact/binary/mirror result. STEP has no SW stages (4/4.5/5) to
+                // provide a tolerance net, so this is that net.
+                bool bothStep = fpA.SourceFormat == "STEP" && fpB.SourceFormat == "STEP";
+                if (bothStep && !isBinaryDup && !isMirror
+                    && (cls == PartClassification.PossibleMatch || cls == PartClassification.Distinct))
+                {
+                    var vote = StepGeometryEvidenceVote.Evaluate(fpA, fpB, StepMatchTolerances.Default);
+                    if (vote.Escalate)
+                    {
+                        cls = PartClassification.PossibleMatch;
+                        reason = vote.Reason;
+                        comparatorVersion = "step-evidence-vote-1";
+                        logger.LogDebug("Stage 3.6 STEP evidence vote for {A}↔{B}: {Flags} flags → review",
+                            sfA?.FileName, sfB?.FileName, vote.AgreeingFlags);
+                    }
                 }
 
                 // Stage 4: body coincidence — definitive proper-rotation vs reflection test.

@@ -94,6 +94,33 @@ public sealed class StepGeometryEstimatorTests
     }
 
     [Fact]
+    public void ParseDescriptor_SeparatesRadiiFromShapeKey_PerSurfaceType()
+    {
+        // Cylinder: radius is field 1; the axis (fields 2-4) stays in the key.
+        var (cylKey, cylR) = StepGeometryEstimator.ParseDescriptor("CYLINDER|0.005|0.0000|0.0000|1.0000");
+        cylKey.Should().Be("CYLINDER|0.0000|0.0000|1.0000");
+        cylR.Should().Equal(0.005);
+
+        // Cone: half-angle (field 1) + axis (fields 3-5) in the key; radius (field 2) extracted.
+        var (coneKey, coneR) = StepGeometryEstimator.ParseDescriptor("CONE|0.100000|0.02|0.0000|0.0000|1.0000");
+        coneKey.Should().Be("CONE|0.100000|0.0000|0.0000|1.0000");
+        coneR.Should().Equal(0.02);
+
+        var (sphKey, sphR) = StepGeometryEstimator.ParseDescriptor("SPHERE|0.01");
+        sphKey.Should().Be("SPHERE");
+        sphR.Should().Equal(0.01);
+
+        var (torKey, torR) = StepGeometryEstimator.ParseDescriptor("TORUS|0.02|0.005");
+        torKey.Should().Be("TORUS");
+        torR.Should().Equal(0.02, 0.005);
+
+        // Plane has no radius — the whole descriptor is the key.
+        var (planeKey, planeR) = StepGeometryEstimator.ParseDescriptor("PLANE|1.0000|0.0000|0.0000");
+        planeKey.Should().Be("PLANE|1.0000|0.0000|0.0000");
+        planeR.Should().BeEmpty();
+    }
+
+    [Fact]
     public void EstimateSurfaceArea_NonCylinderShape_FallsBackToBoxFormula_NotZero()
     {
         // Previously this fallback unconditionally returned 0 for any shape that wasn't exactly

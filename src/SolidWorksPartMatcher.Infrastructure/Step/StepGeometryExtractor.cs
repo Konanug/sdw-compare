@@ -16,9 +16,11 @@ namespace SolidWorksPartMatcher.Infrastructure.Step;
 /// </summary>
 public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
 {
-    // Bump when the face descriptor format changes so cached signatures are invalidated.
-    public const string VersionLabel = "step-p21-1";
-    public const int Version = 100;
+    // Bump when the face descriptor format OR the volume source changes so cached fingerprints are
+    // invalidated. v101/"step-p21-2": VolumeM3 is now the real OCCT volume when available (the scan
+    // orchestrator overrides the estimate via StepPartVolumeRefiner), falling back to the estimate.
+    public const string VersionLabel = "step-p21-2";
+    public const int Version = 101;
 
     public PartFingerprint? Extract(ScannedFile file)
     {

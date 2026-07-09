@@ -79,6 +79,38 @@ internal static class StepGeometryEstimator
             if (Math.Abs(axis[i]) < 1e-9) axis[i] = 0.0;
     }
 
+    /// <summary>
+    /// Splits a face descriptor produced by <see cref="BuildFaceDescriptor"/> into a shape key
+    /// (surface type + all non-radius parameters, compared exactly) and the radius value(s)
+    /// (compared with tolerance). This lets a tolerant signature comparison absorb the tiny radius
+    /// differences that the exact <c>{r:R}</c> formatting otherwise treats as a mismatch, while
+    /// still requiring the surface type and axis/angle to match exactly. Kept beside
+    /// <see cref="BuildFaceDescriptor"/> so the two stay in sync with the descriptor grammar.
+    /// </summary>
+    public static (string ShapeKey, double[] Radii) ParseDescriptor(string descriptor)
+    {
+        var parts = descriptor.Split('|');
+        static double R(string s) => double.TryParse(s, out var v) ? v : double.NaN;
+
+        // Radius positions per grammar (see the Build*Descriptor methods above):
+        //   CYLINDER|r|ax|ay|az        PLANE|nx|ny|nz         CONE|ha|r|ax|ay|az
+        //   SPHERE|r                   TORUS|R|r              OTHER|type / *|PARSE_ERROR
+        switch (parts[0])
+        {
+            case "CYLINDER" when parts.Length == 5:
+                return ($"CYLINDER|{parts[2]}|{parts[3]}|{parts[4]}", [R(parts[1])]);
+            case "CONE" when parts.Length == 6:
+                return ($"CONE|{parts[1]}|{parts[3]}|{parts[4]}|{parts[5]}", [R(parts[2])]);
+            case "SPHERE" when parts.Length == 2:
+                return ("SPHERE", [R(parts[1])]);
+            case "TORUS" when parts.Length == 3:
+                return ("TORUS", [R(parts[1]), R(parts[2])]);
+            default:
+                // PLANE, OTHER, PARSE_ERROR, or any malformed row — no radius, key is the whole string.
+                return (descriptor, []);
+        }
+    }
+
     // ── Geometric property estimation ──────────────────────────────────────
 
     public static double[] ComputeSortedBoundingBox(IReadOnlyList<double[]> points)

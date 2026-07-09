@@ -26,6 +26,70 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     public PartClassification Classification { get; }
     public string ClassificationLabel { get; }
 
+    /// <summary>
+    /// Why this group was declared a match — the distinct classification reasons of the pair
+    /// comparisons among its members, strongest evidence first (e.g. "SHA-256 match", "Proper rigid
+    /// transform confirmed (det(R)=1.000000)", "Under review — 3/4 geometry signals agree: …").
+    /// These are the raw/technical strings; the user-facing popup uses <see cref="FriendlyMatchReason"/>.
+    /// </summary>
+    public IReadOnlyList<string> MatchReasons { get; }
+
+    /// <summary>
+    /// A plain-language explanation of why the parts were grouped, written for a non-technical user.
+    /// Shown in the "Why was this matched?" popup. Built from the classification, plus a friendly
+    /// rendering of the geometry-vote evidence when present.
+    /// </summary>
+    public string FriendlyMatchReason
+    {
+        get
+        {
+            string baseMsg = Classification switch
+            {
+                PartClassification.BinaryDuplicate =>
+                    "These files are exact, byte-for-byte identical copies of each other.",
+                PartClassification.ExactGeometryMatch =>
+                    "These parts have the same shape and size.",
+                PartClassification.GeometryMatchMetadataVariant =>
+                    "These parts have the same shape and size, but differ in a detail such as material.",
+                PartClassification.EngravingVariant =>
+                    "These are the same part, differing only by an engraving or marking on the surface.",
+                PartClassification.RevisionFamily =>
+                    "These are closely related versions of the same part, with only small size differences.",
+                PartClassification.MirrorOrHandedVariant =>
+                    "These parts are mirror images of each other — like a left-hand and a right-hand version.",
+                PartClassification.PossibleMatch =>
+                    "These parts look very similar and may be the same. Please review them to confirm.",
+                PartClassification.ComparisonFailed =>
+                    "These parts couldn't be fully compared, so they've been grouped for you to check.",
+                _ => "These parts were grouped together for review.",
+            };
+
+            var evidence = FriendlyEvidence();
+            return evidence is null ? baseMsg : $"{baseMsg}\n\nWhat matched:\n{evidence}";
+        }
+    }
+
+    // Translates the geometry-vote reason (if any) into plain bullet points. Returns null when the
+    // group wasn't decided by the vote (e.g. an exact/binary match), so only relevant groups show it.
+    private string? FriendlyEvidence()
+    {
+        var vote = MatchReasons.FirstOrDefault(
+            r => r.Contains("signals agree", StringComparison.OrdinalIgnoreCase));
+        if (vote is null) return null;
+
+        var bullets = new List<string>();
+        if (vote.Contains("volume", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• They take up almost exactly the same amount of space.");
+        if (vote.Contains("face count", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• They have the same number of surfaces.");
+        if (vote.Contains("face-type", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• They're built from the same kinds of surfaces (flat, round, etc.).");
+        if (vote.Contains("signature", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• Their surfaces are shaped and sized almost identically.");
+
+        return bullets.Count == 0 ? null : string.Join("\n", bullets);
+    }
+
     private ReviewStatus _reviewStatus;
     public ReviewStatus ReviewStatus
     {
@@ -78,7 +142,8 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         string displayName,
         IReadOnlyList<MatchFileViewModel> files,
         IPartRepository repo,
-        ILogger<MatchGroupViewModel> logger)
+        ILogger<MatchGroupViewModel> logger,
+        IReadOnlyList<string>? matchReasons = null)
     {
         ClusterId = cluster.Id;
         DisplayName = displayName;
@@ -89,6 +154,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         _repo = repo;
         _logger = logger;
         Files = new ObservableCollection<MatchFileViewModel>(files);
+        MatchReasons = matchReasons ?? [];
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -192,18 +258,37 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void ShowMatchReason()
+    {
+        WpfMsgBox.Show(
+            FriendlyMatchReason,
+            "Why these parts were matched",
+            WpfMsgBoxButton.OK,
+            WpfMsgBoxImage.Information);
+    }
+
+    [RelayCommand]
     private void ViewDetails()
     {
-        var lines = new[]
+        var lines = new List<string>
         {
             $"Group:          {DisplayName}",
             $"Canonical Name: {CanonicalName ?? "(none)"}",
             $"Classification: {ClassificationLabel}",
             $"Review Status:  {ReviewStatus}",
             $"Files:          {Files.Count}",
-            "",
-            "Files:",
-        }.Concat(Files.Select(f =>
+        };
+
+        if (MatchReasons.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("Why matched:");
+            lines.AddRange(MatchReasons.Select(r => $"  • {r}"));
+        }
+
+        lines.Add("");
+        lines.Add("Files:");
+        lines.AddRange(Files.Select(f =>
             string.IsNullOrEmpty(f.ConfigurationName) || !f.HasNonDefaultConfig
                 ? $"  {f.FullPath}"
                 : $"  {f.FullPath}  [{f.ConfigurationName}]"));
