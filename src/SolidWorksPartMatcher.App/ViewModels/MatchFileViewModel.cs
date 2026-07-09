@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using SolidWorksPartMatcher.Application.Interfaces;
+using SolidWorksPartMatcher.Domain.Models;
 using System.IO;
 
 namespace SolidWorksPartMatcher.App.ViewModels;
@@ -14,8 +15,39 @@ public sealed partial class MatchFileViewModel : ObservableObject
     public string? ConfigurationName { get; }
     public string SourceFormat { get; }
 
+    // ── Per-file facts, surfaced in the Match Details dialog ─────────────────────────────────
+    public int FaceCount { get; }
+    public double VolumeM3 { get; }
+
+    /// <summary>Engraved text features on this part (0 = none). Always 0 for STEP (no feature tree).</summary>
+    public int EngravedTextCount { get; }
+
+    /// <summary>True when this part's hole was cut with the Hole Wizard rather than a plain cut extrude.</summary>
+    public bool HasHoleWizard { get; }
+
     public bool IsStepFile =>
         string.Equals(SourceFormat, "STEP", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>How this part's hole was modelled — only meaningful for SOLIDWORKS parts.</summary>
+    public string HoleSpecLabel => HasHoleWizard ? "Hole Wizard hole" : "plain cut extrude";
+
+    public string EngravingLabel =>
+        EngravedTextCount > 0 ? $"{EngravedTextCount} engraved text feature(s)" : "none";
+
+    /// <summary>
+    /// One-line "essential values" summary for the details dialog. Feature-derived facts (hole
+    /// specification, engraving) are omitted for STEP, which has no feature tree.
+    /// </summary>
+    public string GeometrySummary
+    {
+        get
+        {
+            var s = $"Faces {FaceCount} · Volume {VolumeM3 * 1e6:0.##} cm³";
+            if (!IsStepFile)
+                s += $" · Hole: {HoleSpecLabel} · Engraving: {EngravingLabel}";
+            return s;
+        }
+    }
 
     // Shown in the UI when config is not the default.
     public bool HasNonDefaultConfig =>
@@ -39,6 +71,7 @@ public sealed partial class MatchFileViewModel : ObservableObject
         string fullPath,
         string? configurationName,
         string sourceFormat,
+        PartFingerprint fingerprint,
         ISolidWorksFileOpener opener,
         ILogger<MatchFileViewModel> logger)
     {
@@ -47,6 +80,10 @@ public sealed partial class MatchFileViewModel : ObservableObject
         FileName = Path.GetFileName(fullPath);
         ConfigurationName = configurationName;
         SourceFormat = sourceFormat;
+        FaceCount = fingerprint.FaceCount;
+        VolumeM3 = fingerprint.VolumeM3;
+        EngravedTextCount = PartFeatureFacts.EngravedTextCount(fingerprint);
+        HasHoleWizard = PartFeatureFacts.HasHoleWizard(fingerprint);
         _opener = opener;
         _logger = logger;
 

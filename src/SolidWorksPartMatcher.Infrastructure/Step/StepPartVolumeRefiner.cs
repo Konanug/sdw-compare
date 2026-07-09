@@ -34,6 +34,10 @@ public static class StepPartVolumeRefiner
         var result = new Dictionary<string, double>(StringComparer.Ordinal);
         if (stepFilePaths.Count == 0) return result;
 
+        // Honour cancellation before doing any work, so an already-cancelled scan aborts even when
+        // the OCCT tool is absent (which would otherwise return early and look like a clean degrade).
+        ct.ThrowIfCancellationRequested();
+
         var (exe, script) = FindTool();
         if (string.IsNullOrEmpty(exe))
         {

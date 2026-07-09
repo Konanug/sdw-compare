@@ -15,6 +15,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 - **Real STEP volume.** `StepPartVolumeRefiner` batches STEP part files through the bundled OCCT tool
   to replace the previous bounding-box volume estimate. Falls back to the estimate when the tool is
   unavailable — no regression.
+- **Hole-specification reporting (SOLIDWORKS parts).** When two parts have the same shape but one
+  cuts its hole with the **Hole Wizard** and the other with a **plain cut extrude**, this is now
+  reported and named per file instead of being silently discarded. Previously such a pair was
+  classified `Distinct`, which the UI hides. It is now surfaced for review (never auto-merged, since
+  the two are different engineering specifications). When the shapes genuinely differ, the pair still
+  stays `Distinct`.
+- **Engraving reporting.** Match details now state which part carries engraved text features and how
+  many, and which has none.
 - **"Why was this matched?"** — every match group's ⋮ menu now opens a popup explaining, in plain
   language, why its parts were grouped (exact copy, mirror image, close-but-review, etc.).
 
@@ -24,6 +32,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
   STEP fingerprints so they are re-measured with real volume.
 - The ⋮ group-actions button is now the rightmost column on every row, with **Open 3D View** moved to
   its left, so the ⋮ buttons align in a single column.
+- **"Why was this matched?" and "View Details" are merged into one "Match Details" dialog**: the
+  plain-language explanation, then the hole-specification and engraving call-outs (naming each file),
+  then the essential per-part values (faces, volume, hole type, engraving), then the raw technical
+  evidence. SOLIDWORKS parts keep the existing feature+geometry pipeline — the multi-signal evidence
+  vote remains STEP-only.
+- Hole-specification conflicts no longer block the body-coincidence check, so the report can state
+  whether the holes actually sit in the same positions rather than guessing from coarse metrics.
 
 ## [1.0.0] — 2026-07-09
 

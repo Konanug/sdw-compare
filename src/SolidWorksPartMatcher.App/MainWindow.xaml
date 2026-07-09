@@ -342,9 +342,9 @@
                                             Click="GroupActionsButton_Click">
                                         <Button.ContextMenu>
                                             <ContextMenu>
-                                                <MenuItem Header="Why was this matched?"
+                                                <MenuItem Header="Match Details — why, and what differs"
                                                           FontWeight="SemiBold"
-                                                          Command="{Binding PlacementTarget.Tag.ShowMatchReasonCommand,
+                                                          Command="{Binding PlacementTarget.Tag.ShowMatchDetailsCommand,
                                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 <Separator/>
                                                 <MenuItem Header="Open All in SOLIDWORKS"
@@ -362,10 +362,6 @@
                                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                                 <MenuItem Header="Rename / Edit Name…"
                                                           Command="{Binding PlacementTarget.Tag.EditCanonicalNameCommand,
-                                                                    RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
-                                                <Separator/>
-                                                <MenuItem Header="View Details"
-                                                          Command="{Binding PlacementTarget.Tag.ViewDetailsCommand,
                                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                                             </ContextMenu>
                                         </Button.ContextMenu>

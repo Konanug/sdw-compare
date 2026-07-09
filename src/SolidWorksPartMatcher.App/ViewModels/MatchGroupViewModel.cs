@@ -257,47 +257,74 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Single "Match Details" dialog — replaces the former separate "Why was this matched?" and
+    /// "View Details" popups. Leads with the plain-language explanation, then calls out the two
+    /// differences a user most needs named per file (hole specification, engraving), then the
+    /// essential per-file values, and finally the raw technical evidence for anyone who wants it.
+    /// </summary>
     [RelayCommand]
-    private void ShowMatchReason()
+    private void ShowMatchDetails()
     {
         WpfMsgBox.Show(
-            FriendlyMatchReason,
-            "Why these parts were matched",
+            BuildMatchDetailsText(),
+            $"Match Details — {DisplayName}",
             WpfMsgBoxButton.OK,
             WpfMsgBoxImage.Information);
     }
 
-    [RelayCommand]
-    private void ViewDetails()
+    internal string BuildMatchDetailsText()
     {
         var lines = new List<string>
         {
-            $"Group:          {DisplayName}",
-            $"Canonical Name: {CanonicalName ?? "(none)"}",
-            $"Classification: {ClassificationLabel}",
-            $"Review Status:  {ReviewStatus}",
-            $"Files:          {Files.Count}",
+            $"{DisplayName} — {ClassificationLabel}",
+            $"Name: {CanonicalName ?? "(none)"}      Review status: {ReviewStatus}      Parts: {Files.Count}",
+            "",
+            "WHY THESE WERE GROUPED",
+            FriendlyMatchReason,
         };
+
+        // Hole specification — only a difference is worth calling out, and the user needs to know
+        // exactly which file is which. Meaningless for STEP (no feature tree), so ignore those.
+        var swFiles = Files.Where(f => !f.IsStepFile).ToList();
+        var wizard = swFiles.Where(f => f.HasHoleWizard).ToList();
+        var plainCut = swFiles.Where(f => !f.HasHoleWizard).ToList();
+        if (wizard.Count > 0 && plainCut.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("HOLE SPECIFICATION — these differ");
+            lines.AddRange(wizard.Select(f => $"  • {f.FileName}: Hole Wizard hole"));
+            lines.AddRange(plainCut.Select(f => $"  • {f.FileName}: plain cut extrude"));
+            lines.Add("  The holes may sit in the same place, but they were modelled differently,");
+            lines.Add("  so these are treated as different engineering specifications.");
+        }
+
+        // Engraving — list every SW part so "has none" is explicit, not just absent.
+        if (swFiles.Any(f => f.EngravedTextCount > 0))
+        {
+            lines.Add("");
+            lines.Add("ENGRAVING");
+            lines.AddRange(swFiles.Select(f => $"  • {f.FileName}: {f.EngravingLabel}"));
+        }
+
+        lines.Add("");
+        lines.Add("PARTS");
+        foreach (var f in Files)
+        {
+            var cfg = f.HasNonDefaultConfig ? $"  [{f.ConfigurationName}]" : "";
+            lines.Add($"  {f.FileName}{cfg}");
+            lines.Add($"     {f.GeometrySummary}");
+            lines.Add($"     {f.FullPath}");
+        }
 
         if (MatchReasons.Count > 0)
         {
             lines.Add("");
-            lines.Add("Why matched:");
+            lines.Add("TECHNICAL EVIDENCE");
             lines.AddRange(MatchReasons.Select(r => $"  • {r}"));
         }
 
-        lines.Add("");
-        lines.Add("Files:");
-        lines.AddRange(Files.Select(f =>
-            string.IsNullOrEmpty(f.ConfigurationName) || !f.HasNonDefaultConfig
-                ? $"  {f.FullPath}"
-                : $"  {f.FullPath}  [{f.ConfigurationName}]"));
-
-        WpfMsgBox.Show(
-            string.Join("\n", lines),
-            $"Details — {DisplayName}",
-            WpfMsgBoxButton.OK,
-            WpfMsgBoxImage.Information);
+        return string.Join("\n", lines);
     }
 
     [RelayCommand]

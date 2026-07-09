@@ -367,6 +367,7 @@ public sealed partial class MainViewModel : ObservableObject
                     return new MatchFileViewModel(
                         sf.Id, sf.NormalizedPath, fp.ConfigName,
                         fp.SourceFormat,
+                        fp,
                         _opener,
                         _loggerFactory.CreateLogger<MatchFileViewModel>());
                 })

@@ -222,9 +222,19 @@ public sealed class ScanOrchestrationService(
 
                 var isBinaryDup = fpA.FileSha256 == fpB.FileSha256;
                 var (isMirror, mirrorReason) = ClassifyMirror(fpA, fpB, score);
-                // Hole Wizard vs plain cut-extrude is a different engineering specification
-                // regardless of geometric coincidence — block all geometry stages for this pair.
-                var hasHoleWizardConflict = HasHoleWizardConflict(fpA, fpB);
+
+                // Resolve the ScannedFile references up-front so classification reasons can name the
+                // specific file that carries a Hole Wizard hole or an engraving, instead of "A"/"B".
+                fileByScannedId.TryGetValue(fpA.ScannedFileId, out var sfA);
+                fileByScannedId.TryGetValue(fpB.ScannedFileId, out var sfB);
+                string nameA = sfA?.FileName ?? "A";
+                string nameB = sfB?.FileName ?? "B";
+
+                // Hole Wizard vs plain cut-extrude is a different engineering specification, so such a
+                // pair must never auto-merge. Unlike before we no longer short-circuit to Distinct
+                // here: the geometry stages are allowed to run so we can tell the user whether the
+                // holes actually sit in the same positions. The verdict is applied after Stage 5.
+                var (holeConflict, aUsesWizard) = HoleSpecConflict(fpA, fpB);
 
                 PartClassification cls;
                 string reason;
@@ -239,11 +249,6 @@ public sealed class ScanOrchestrationService(
                 {
                     cls = PartClassification.MirrorOrHandedVariant;
                     reason = mirrorReason!;
-                }
-                else if (hasHoleWizardConflict)
-                {
-                    cls = PartClassification.Distinct;
-                    reason = $"Hole specification conflict (one uses Hole Wizard, other uses plain cut); score {score:F2}";
                 }
                 else
                 {
@@ -262,7 +267,12 @@ public sealed class ScanOrchestrationService(
                     else if ((fpA.SketchTextCutCount > 0) != (fpB.SketchTextCutCount > 0) && score >= 0.60)
                     {
                         cls = PartClassification.EngravingVariant;
-                        reason = $"Text sketch on one part (A={fpA.SketchTextCutCount} B={fpB.SketchTextCutCount}); coarse score={score:F2}";
+                        var (engFile, engCount, plainFile) = fpA.SketchTextCutCount > 0
+                            ? (nameA, fpA.SketchTextCutCount, nameB)
+                            : (nameB, fpB.SketchTextCutCount, nameA);
+                        reason =
+                            $"Engraving differs: '{engFile}' has {engCount} engraved text feature(s), " +
+                            $"'{plainFile}' has none; coarse score {score:F2}";
                     }
                     else if (score >= 0.90)
                     {
@@ -275,10 +285,6 @@ public sealed class ScanOrchestrationService(
                         reason = $"Coarse score {score:F2}";
                     }
                 }
-
-                // Look up ScannedFile references once — needed by both Stage 4 and Stage 5.
-                fileByScannedId.TryGetValue(fpA.ScannedFileId, out var sfA);
-                fileByScannedId.TryGetValue(fpB.ScannedFileId, out var sfB);
 
                 // Whether either file is a STEP — SW COM stages must be skipped for these.
                 bool hasAnyStep = fpA.SourceFormat == "STEP" || fpB.SourceFormat == "STEP";
@@ -326,8 +332,12 @@ public sealed class ScanOrchestrationService(
                 // Runs for high-score non-binary SLDPRT-SLDPRT pairs to confirm ExactGeometryMatch
                 // or correctly classify mirrors. det(R)≈+1 → exact; det(R)≈-1 → mirror.
                 // Skipped whenever either file is STEP (SW COM cannot reliably open STEP silently).
+                // Note: a hole-specification conflict no longer blocks this stage. We deliberately run
+                // it so we can establish whether the two bodies actually coincide — i.e. whether the
+                // holes are in the same positions — before reporting the conflict. The hole-spec
+                // verdict below overrides whatever this stage concludes, so it can never auto-merge.
                 if (bodyChecker != null && sfA != null && sfB != null && !isBinaryDup && !isMirror
-                    && !hasHoleWizardConflict && cls != PartClassification.EngravingVariant
+                    && cls != PartClassification.EngravingVariant
                     && !hasAnyStep && score >= 0.85)
                 {
                     var bodyResult = await WithComRetryAsync(
@@ -352,7 +362,7 @@ public sealed class ScanOrchestrationService(
                 bool stage4Inconclusive = cls == PartClassification.PossibleMatch
                     || cls == PartClassification.Distinct;
                 if (tessellationComparator != null && sfA != null && sfB != null
-                    && !isBinaryDup && !isMirror && !hasHoleWizardConflict
+                    && !isBinaryDup && !isMirror && !holeConflict
                     && cls != PartClassification.EngravingVariant
                     && !hasAnyStep && stage4Inconclusive && score >= 0.75)
                 {
@@ -385,7 +395,7 @@ public sealed class ScanOrchestrationService(
                 // already produced a definitive result (ExactGeometryMatch, Mirror, Engraving).
                 if (geometryComparator != null && sfA != null && sfB != null
                     && cls == PartClassification.PossibleMatch && !isBinaryDup
-                    && !hasHoleWizardConflict && !hasAnyStep && score >= 0.70)
+                    && !holeConflict && !hasAnyStep && score >= 0.70)
                 {
                     var detail = await WithComRetryAsync(
                         () => geometryComparator.CompareAsync(sfA, fpA, sfB, fpB, cancellationToken),
@@ -399,6 +409,40 @@ public sealed class ScanOrchestrationService(
                         logger.LogDebug("Stage 5 result for {A}↔{B}: {Cls} (J={J:F3})",
                             sfA.FileName, sfB.FileName, cls, detail.JaccardSimilarity);
                     }
+                }
+
+                // Hole-specification verdict — applied last so it overrides every geometry stage and
+                // can never auto-merge. A Hole Wizard hole and a plain cut-extrude are different
+                // engineering specifications even when the solids coincide.
+                //   • Shapes coincide  → the holes sit in the same positions, but were modelled
+                //     differently. Surface it as PossibleMatch (grouped, NeedsReview) naming which
+                //     file uses which, rather than hiding it as Distinct like the old behaviour did.
+                //   • Shapes differ    → they are simply different parts; stay Distinct.
+                if (holeConflict && !isBinaryDup)
+                {
+                    string wizardFile = aUsesWizard ? nameA : nameB;
+                    string plainFile = aUsesWizard ? nameB : nameA;
+                    bool sameShape = cls is PartClassification.ExactGeometryMatch
+                                         or PartClassification.GeometryMatchMetadataVariant;
+
+                    if (sameShape)
+                    {
+                        cls = PartClassification.PossibleMatch;
+                        reason =
+                            $"Same shape — the holes are in the same positions — but the hole specification " +
+                            $"differs: '{wizardFile}' uses a Hole Wizard hole, '{plainFile}' uses a plain " +
+                            $"cut extrude. Different engineering specification, so not merged automatically.";
+                    }
+                    else
+                    {
+                        cls = PartClassification.Distinct;
+                        reason =
+                            $"Hole specification differs ('{wizardFile}' uses a Hole Wizard hole, " +
+                            $"'{plainFile}' uses a plain cut extrude) and the shapes are not identical; " +
+                            $"coarse score {score:F2}.";
+                    }
+                    comparatorVersion = "hole-spec-2";
+                    logger.LogDebug("Hole-spec verdict for {A}↔{B}: {Cls}", nameA, nameB, cls);
                 }
 
                 var pair = new CandidatePair(
@@ -643,14 +687,17 @@ public sealed class ScanOrchestrationService(
         return PartClassification.GeometryMatchMetadataVariant;
     }
 
-    // Quality.17: Hole Wizard and a plain cut-extrude are different parts.
-    // Returns true when one fingerprint has HoleWzd features and the other does not.
-    private static bool HasHoleWizardConflict(PartFingerprint a, PartFingerprint b)
+    /// <summary>
+    /// A Hole Wizard hole and a plain cut-extrude are different engineering specifications, so a
+    /// pair where exactly one side uses the Hole Wizard must never auto-merge. Returns whether the
+    /// conflict exists and — so the report can name the file rather than say "A"/"B" — whether it is
+    /// <paramref name="a"/> that carries the Hole Wizard feature.
+    /// </summary>
+    internal static (bool Conflict, bool AUsesWizard) HoleSpecConflict(PartFingerprint a, PartFingerprint b)
     {
-        static bool HasWzd(PartFingerprint fp) =>
-            fp.FeatureTypeHistogram.Keys.Any(k =>
-                k.StartsWith("HoleWzd", StringComparison.OrdinalIgnoreCase));
-        return HasWzd(a) != HasWzd(b);
+        bool wa = PartFeatureFacts.HasHoleWizard(a);
+        bool wb = PartFeatureFacts.HasHoleWizard(b);
+        return (wa != wb, wa);
     }
 
     // Compares sorted FaceGeometricSignature lists for a STEP-STEP pair.
