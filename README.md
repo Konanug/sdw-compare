@@ -55,12 +55,34 @@ tools\build_viewer.ps1   # once; needs Python + pyvista + build123d
 .\publish.ps1            # or: .\publish.ps1 -Version 1.2.0
 ```
 
-This writes `publish\SolidWorksPartMatcher-v<version>\` and a matching `.zip`. Distribute the zip.
+This writes `publish\SolidWorksPartMatcher-v<version>\` and a matching `.zip`.
 
 `build_viewer.ps1` produces **both** bundled tools — `view_steps.exe` (3D viewer) and
 `compute_component_volume.exe` (real geometry volumes) — in one PyInstaller bundle, since they share
 the same OpenCASCADE runtime. Skipping it still yields a working app, but the 3D viewer is
 unavailable and volumes fall back to a coarser estimate.
+
+### Installer
+
+For distribution, prefer the installer over the zip. It packages the same files into a single
+executable, so the recipient never sees the bundled runtime — they run one file and launch the app
+from the Start menu.
+
+```powershell
+.\publish.ps1 -Version 1.2.0                     # build the payload first
+.\installer\build_installer.ps1 -Version 1.2.0   # then wrap it
+```
+
+That produces `publish\SolidWorksPartMatcher-Setup-v<version>.exe`. It installs per-user by default,
+so there is no admin prompt; pass `/ALLUSERS` for a machine-wide install. Uninstalling removes
+everything, and the app's database and logs live in `%LOCALAPPDATA%\SolidWorksPartMatcher` rather
+than in the install directory.
+
+Building the installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php):
+
+```powershell
+winget install --id JRSoftware.InnoSetup -e
+```
 
 ## How it works
 
