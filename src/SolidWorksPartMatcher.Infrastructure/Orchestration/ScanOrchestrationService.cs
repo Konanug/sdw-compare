@@ -144,8 +144,10 @@ public sealed class ScanOrchestrationService(
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
             if (stepMissPaths.Count > 0)
-                realStepVolByPath = StepPartVolumeRefiner.Refine(
-                    stepMissPaths, msg => logger.LogInformation("STEP volume: {Msg}", msg));
+                realStepVolByPath = await StepPartVolumeRefiner.RefineAsync(
+                    stepMissPaths,
+                    msg => logger.LogInformation("STEP volume: {Msg}", msg),
+                    cancellationToken);
 
             // Pass 3 — extract the misses.
             foreach (var (sha, file, isStep) in misses)

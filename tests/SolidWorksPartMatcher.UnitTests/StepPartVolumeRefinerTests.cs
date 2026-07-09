@@ -18,15 +18,15 @@ public sealed class StepPartVolumeRefinerTests
         Path.Combine(AppContext.BaseDirectory, "Fixtures", "known-cylinder.step");
 
     [Fact]
-    public void Refine_EmptyList_ReturnsEmpty_NoSubprocess()
+    public async Task RefineAsync_EmptyList_ReturnsEmpty_NoSubprocess()
     {
-        StepPartVolumeRefiner.Refine([]).Should().BeEmpty();
+        (await StepPartVolumeRefiner.RefineAsync([])).Should().BeEmpty();
     }
 
     [Fact]
-    public void Refine_KnownFixtures_ReturnsRealVolumes_OrVacuousWhenToolAbsent()
+    public async Task RefineAsync_KnownFixtures_ReturnsRealVolumes_OrVacuousWhenToolAbsent()
     {
-        var result = StepPartVolumeRefiner.Refine([BoxFixture, CylinderFixture]);
+        var result = await StepPartVolumeRefiner.RefineAsync([BoxFixture, CylinderFixture]);
 
         if (result.Count == 0) return; // OCCT tool unavailable in this environment — vacuous pass
 
@@ -35,5 +35,18 @@ public sealed class StepPartVolumeRefinerTests
 
         result.Should().ContainKey(CylinderFixture);
         result[CylinderFixture].Should().BeApproximately(Math.PI * 25 * 20 * 1e-9, 1e-9); // r=5, h=20 mm
+    }
+
+    [Fact]
+    public async Task RefineAsync_AlreadyCancelledToken_Throws_DoesNotSilentlyDegrade()
+    {
+        // A cancelled scan must abort, not fall back to estimates as if the tool were missing.
+        using var cts = new CancellationTokenSource();
+        await cts.CancelAsync();
+
+        var act = async () =>
+            await StepPartVolumeRefiner.RefineAsync([BoxFixture], log: null, ct: cts.Token);
+
+        await act.Should().ThrowAsync<OperationCanceledException>();
     }
 }

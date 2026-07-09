@@ -13,8 +13,9 @@ namespace SolidWorksPartMatcher.Infrastructure.Step;
 /// code.
 ///
 /// Degrades gracefully: if the tool is missing (no Python/build123d, no bundled exe), the subprocess
-/// errors, or one file fails to parse, the affected files simply aren't in the returned map and the
-/// caller keeps the existing estimate. Never throws.
+/// errors, times out, or one file fails to parse, the affected files simply aren't in the returned
+/// map and the caller keeps the existing estimate. The only exception it propagates is
+/// <see cref="OperationCanceledException"/>, so a cancelled scan aborts promptly.
 /// </summary>
 public static class StepPartVolumeRefiner
 {
@@ -24,10 +25,11 @@ public static class StepPartVolumeRefiner
     /// <summary>
     /// Returns file path → real volume (m³) for every STEP file the tool could measure. Paths not
     /// present in the result should keep their existing (estimated) volume. Diagnostics go to
-    /// <paramref name="log"/> (never thrown).
+    /// <paramref name="log"/>. Cancelling <paramref name="ct"/> kills the subprocess (whole tree)
+    /// and throws <see cref="OperationCanceledException"/>.
     /// </summary>
-    public static Dictionary<string, double> Refine(
-        IReadOnlyList<string> stepFilePaths, Action<string>? log = null)
+    public static async Task<Dictionary<string, double>> RefineAsync(
+        IReadOnlyList<string> stepFilePaths, Action<string>? log = null, CancellationToken ct = default)
     {
         var result = new Dictionary<string, double>(StringComparer.Ordinal);
         if (stepFilePaths.Count == 0) return result;
@@ -48,7 +50,7 @@ public static class StepPartVolumeRefiner
             File.WriteAllText(manifestPath,
                 JsonSerializer.Serialize(new { paths = stepFilePaths.ToArray() }));
 
-            string stdout = RunTool(exe, script, manifestPath, log, out bool ok);
+            var (stdout, ok) = await RunToolAsync(exe, script, manifestPath, log, ct);
             if (!ok) return result;
 
             Dictionary<string, double?>? volumesByPath;
@@ -64,6 +66,10 @@ public static class StepPartVolumeRefiner
                 if (volume is { } v && v > 0)
                     result[path] = v;
         }
+        catch (OperationCanceledException)
+        {
+            throw; // the user cancelled the scan — do not silently degrade
+        }
         catch (Exception ex)
         {
             log?.Invoke($"Real STEP volume failed ({ex.Message}) — using estimates.");
@@ -77,10 +83,9 @@ public static class StepPartVolumeRefiner
         return result;
     }
 
-    private static string RunTool(
-        string exe, string? script, string manifestPath, Action<string>? log, out bool succeeded)
+    private static async Task<(string Stdout, bool Succeeded)> RunToolAsync(
+        string exe, string? script, string manifestPath, Action<string>? log, CancellationToken ct)
     {
-        succeeded = false;
         var psi = new ProcessStartInfo(exe)
         {
             UseShellExecute = false,
@@ -97,26 +102,43 @@ public static class StepPartVolumeRefiner
         if (process is null)
         {
             log?.Invoke("Real STEP volume failed to start — using estimates.");
-            return string.Empty;
+            return (string.Empty, false);
         }
 
-        string stdout = process.StandardOutput.ReadToEnd();
-        string stderr = process.StandardError.ReadToEnd();
-        if (!process.WaitForExit((int)Timeout.TotalMilliseconds))
+        // Drain both pipes concurrently. Reading stdout to completion first can deadlock: the child
+        // writes per-file diagnostics to stderr, and once that pipe's buffer fills the child blocks
+        // on write while we block on stdout — neither side ever progresses, and the timeout path
+        // below is never reached because WaitForExit is never called.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(ct);
+        var stderrTask = process.StandardError.ReadToEndAsync(ct);
+
+        using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeoutCts.CancelAfter(Timeout);
+        try
+        {
+            await process.WaitForExitAsync(timeoutCts.Token);
+        }
+        catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { /* already exited */ }
+            try { await Task.WhenAll(stdoutTask, stderrTask); } catch { /* pipes torn down */ }
+
+            if (ct.IsCancellationRequested) throw; // user cancelled the scan
             log?.Invoke($"Real STEP volume timed out after {Timeout.TotalSeconds:F0}s — using estimates.");
-            return string.Empty;
+            return (string.Empty, false);
         }
+
+        string stdout = await stdoutTask;
+        string stderr = await stderrTask;
+
         if (process.ExitCode != 0)
         {
             var tail = stderr.Length > 500 ? stderr[^500..] : stderr;
             log?.Invoke($"Real STEP volume exited with code {process.ExitCode} — using estimates.{(tail.Length > 0 ? $" ({tail.Trim()})" : "")}");
-            return string.Empty;
+            return (string.Empty, false);
         }
 
-        succeeded = true;
-        return stdout;
+        return (stdout, true);
     }
 
     // Bundled-exe-vs-dev-script resolution (same convention as OcctVolumeRefiner.FindTool; kept

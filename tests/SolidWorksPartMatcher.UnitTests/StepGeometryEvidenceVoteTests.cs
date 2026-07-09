@@ -20,14 +20,20 @@ public sealed class StepGeometryEvidenceVoteTests
     private static readonly Dictionary<string, int> BaseHist =
         new() { ["CYLINDRICAL_SURFACE"] = 1, ["PLANE"] = 2 };
 
+    // Identity fields are fixed rather than generated: the vote reads only geometry, so random ids
+    // and timestamps would add run-to-run variance to the fixture without exercising anything.
+    private static readonly Guid FixedId = new("11111111-1111-1111-1111-111111111111");
+    private static readonly Guid FixedFileId = new("22222222-2222-2222-2222-222222222222");
+    private static readonly DateTime FixedExtractedUtc = new(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+
     private static PartFingerprint Step(
         double volume,
         int faceCount = 3,
         Dictionary<string, int>? hist = null,
         string[]? sig = null) => new(
-            Id: Guid.NewGuid(),
-            ScannedFileId: Guid.NewGuid(),
-            FileSha256: Guid.NewGuid().ToString("N"),
+            Id: FixedId,
+            ScannedFileId: FixedFileId,
+            FileSha256: new string('a', 64),
             ConfigName: "Default",
             ExtractorVersion: 101,
             SolidBodyCount: 1,
@@ -46,7 +52,7 @@ public sealed class StepGeometryEvidenceVoteTests
             CustomProperties: new Dictionary<string, string>(),
             SolidWorksVersion: "",
             ExtractorVersionLabel: "step-p21-2",
-            ExtractedUtc: DateTime.UtcNow,
+            ExtractedUtc: FixedExtractedUtc,
             ChiralitySign: null,
             CoMOffsetInBB: null,
             SketchTextCutCount: 0,

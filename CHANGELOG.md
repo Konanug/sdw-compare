@@ -6,6 +6,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 ## [1.1.0] — 2026-07-09
 
 ### Added
+
 - **STEP geometric-evidence vote.** STEP parts are now measured with the real OpenCASCADE volume and
   compared using orientation-invariant signals — volume (within 5%), face count, surface-type mix,
   and a tolerance-aware surface-signature match. When at least 3 of the 4 agree, the pair is
@@ -18,6 +19,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
   language, why its parts were grouped (exact copy, mirror image, close-but-review, etc.).
 
 ### Changed
+
 - STEP extractor version bumped to `101` / `step-p21-2`, which invalidates cached estimate-based
   STEP fingerprints so they are re-measured with real volume.
 - The ⋮ group-actions button is now the rightmost column on every row, with **Open 3D View** moved to
@@ -26,6 +28,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 ## [1.0.0] — 2026-07-09
 
 ### Added
+
 - **Duplicate part detection** across `.SLDPRT` and STEP files: SHA-256 hashing, fingerprint
   extraction, candidate blocking, body-coincidence checking, union-find clustering, and an auditable
   Excel report. Only byte-identical or confirmed rigid-body matches auto-merge.
@@ -37,6 +40,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
   runtime) — no .NET or Python install required on the target machine.
 
 ### Fixed
+
 - **Fingerprint cache restored.** `GetFingerprintAsync` was a stub, so every scan re-opened every
   part in SOLIDWORKS. Repeat scans now reuse geometry keyed on SHA-256 + configuration + extractor
   version (with a lookup index), which also removes a source of run-to-run variance.

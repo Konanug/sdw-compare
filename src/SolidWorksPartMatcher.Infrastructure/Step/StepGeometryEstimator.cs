@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace SolidWorksPartMatcher.Infrastructure.Step;
 
 /// <summary>
@@ -24,12 +26,18 @@ internal static class StepGeometryEstimator
         };
     }
 
+    // Descriptors are persisted (SQLite) and compared as exact strings, so every number in them must
+    // be formatted and parsed with the invariant culture. Under a comma-decimal locale the same
+    // geometry would otherwise serialise differently, and a cached signature written under one locale
+    // would fail to parse under another (radii → NaN → no match).
+    private static string Inv(FormattableString fs) => FormattableString.Invariant(fs);
+
     private static string BuildCylinderDescriptor(StepP21Reader reader, int surfId)
     {
         if (!reader.TryGetCylinderParams(surfId, out double r, out var axis))
             return "CYLINDER|PARSE_ERROR";
         CanonicalizeAxis(axis);
-        return $"CYLINDER|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}";
+        return Inv($"CYLINDER|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}");
     }
 
     private static string BuildPlaneDescriptor(StepP21Reader reader, int surfId)
@@ -37,7 +45,7 @@ internal static class StepGeometryEstimator
         if (!reader.TryGetPlaneNormal(surfId, out var n))
             return "PLANE|PARSE_ERROR";
         CanonicalizeAxis(n);
-        return $"PLANE|{n[0]:F4}|{n[1]:F4}|{n[2]:F4}";
+        return Inv($"PLANE|{n[0]:F4}|{n[1]:F4}|{n[2]:F4}");
     }
 
     private static string BuildConeDescriptor(StepP21Reader reader, int surfId)
@@ -45,21 +53,21 @@ internal static class StepGeometryEstimator
         if (!reader.TryGetConeParams(surfId, out double ha, out double r, out var axis))
             return "CONE|PARSE_ERROR";
         CanonicalizeAxis(axis);
-        return $"CONE|{ha:F6}|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}";
+        return Inv($"CONE|{ha:F6}|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}");
     }
 
     private static string BuildSphereDescriptor(StepP21Reader reader, int surfId)
     {
         if (!reader.TryGetSphereRadius(surfId, out double r))
             return "SPHERE|PARSE_ERROR";
-        return $"SPHERE|{r:R}";
+        return Inv($"SPHERE|{r:R}");
     }
 
     private static string BuildTorusDescriptor(StepP21Reader reader, int surfId)
     {
         if (!reader.TryGetTorusParams(surfId, out double R, out double r))
             return "TORUS|PARSE_ERROR";
-        return $"TORUS|{R:R}|{r:R}";
+        return Inv($"TORUS|{R:R}|{r:R}");
     }
 
     // Normalizes direction vector so the dominant component is positive.
@@ -90,7 +98,9 @@ internal static class StepGeometryEstimator
     public static (string ShapeKey, double[] Radii) ParseDescriptor(string descriptor)
     {
         var parts = descriptor.Split('|');
-        static double R(string s) => double.TryParse(s, out var v) ? v : double.NaN;
+        // Invariant culture to match how Build*Descriptor wrote these numbers (see Inv above).
+        static double R(string s) => double.TryParse(
+            s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
 
         // Radius positions per grammar (see the Build*Descriptor methods above):
         //   CYLINDER|r|ax|ay|az        PLANE|nx|ny|nz         CONE|ha|r|ax|ay|az
