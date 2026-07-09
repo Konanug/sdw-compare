@@ -34,20 +34,18 @@ public sealed partial class MatchFileViewModel : ObservableObject
     public string EngravingLabel =>
         EngravedTextCount > 0 ? $"{EngravedTextCount} engraved text feature(s)" : "none";
 
+    /// <summary>Folder holding this part. The file name is shown separately, so it isn't repeated here.</summary>
+    public string DirectoryPath => Path.GetDirectoryName(FullPath) ?? FullPath;
+
+    /// <summary>Essential geometry values, shown for every part.</summary>
+    public string GeometryLine => $"Faces {FaceCount} · Volume {VolumeM3 * 1e6:0.##} cm³";
+
     /// <summary>
-    /// One-line "essential values" summary for the details dialog. Feature-derived facts (hole
-    /// specification, engraving) are omitted for STEP, which has no feature tree.
+    /// Feature-derived facts (hole specification, engraving). Null for STEP, which has no feature
+    /// tree, so the details dialog simply omits the line rather than printing meaningless values.
     /// </summary>
-    public string GeometrySummary
-    {
-        get
-        {
-            var s = $"Faces {FaceCount} · Volume {VolumeM3 * 1e6:0.##} cm³";
-            if (!IsStepFile)
-                s += $" · Hole: {HoleSpecLabel} · Engraving: {EngravingLabel}";
-            return s;
-        }
-    }
+    public string? FeatureLine =>
+        IsStepFile ? null : $"Hole: {HoleSpecLabel} · Engraving: {EngravingLabel}";
 
     // Shown in the UI when config is not the default.
     public bool HasNonDefaultConfig =>

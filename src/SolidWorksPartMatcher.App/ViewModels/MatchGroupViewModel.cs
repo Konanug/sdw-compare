@@ -268,60 +268,72 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     {
         WpfMsgBox.Show(
             BuildMatchDetailsText(),
-            $"Match Details — {DisplayName}",
+            "Match Details",
             WpfMsgBoxButton.OK,
             WpfMsgBoxImage.Information);
     }
 
     internal string BuildMatchDetailsText()
     {
+        // Sorted by file name so the parts appear in a stable, predictable order and are easy to
+        // tell apart, and numbered + blank-line separated so each block reads as its own part.
+        var parts = Files.OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase).ToList();
+
         var lines = new List<string>
         {
             $"{DisplayName} — {ClassificationLabel}",
-            $"Name: {CanonicalName ?? "(none)"}      Review status: {ReviewStatus}      Parts: {Files.Count}",
+            $"Name: {CanonicalName ?? "(none)"}",
+            $"Review status: {ReviewStatus}",
+            $"Parts: {parts.Count}",
             "",
             "WHY THESE WERE GROUPED",
             FriendlyMatchReason,
         };
 
         // Hole specification — only a difference is worth calling out, and the user needs to know
-        // exactly which file is which. Meaningless for STEP (no feature tree), so ignore those.
-        var swFiles = Files.Where(f => !f.IsStepFile).ToList();
-        var wizard = swFiles.Where(f => f.HasHoleWizard).ToList();
-        var plainCut = swFiles.Where(f => !f.HasHoleWizard).ToList();
+        // exactly which part is which. Meaningless for STEP (no feature tree), so ignore those.
+        var swParts = parts.Where(f => !f.IsStepFile).ToList();
+        var wizard = swParts.Where(f => f.HasHoleWizard).ToList();
+        var plainCut = swParts.Where(f => !f.HasHoleWizard).ToList();
         if (wizard.Count > 0 && plainCut.Count > 0)
         {
             lines.Add("");
             lines.Add("HOLE SPECIFICATION — these differ");
-            lines.AddRange(wizard.Select(f => $"  • {f.FileName}: Hole Wizard hole"));
-            lines.AddRange(plainCut.Select(f => $"  • {f.FileName}: plain cut extrude"));
-            lines.Add("  The holes may sit in the same place, but they were modelled differently,");
-            lines.Add("  so these are treated as different engineering specifications.");
+            lines.AddRange(wizard.Select(f => $"   • {f.FileName} — Hole Wizard hole"));
+            lines.AddRange(plainCut.Select(f => $"   • {f.FileName} — plain cut extrude"));
+            lines.Add("");
+            lines.Add("   The holes may sit in the same place, but they were modelled differently,");
+            lines.Add("   so these count as different engineering specifications.");
         }
 
-        // Engraving — list every SW part so "has none" is explicit, not just absent.
-        if (swFiles.Any(f => f.EngravedTextCount > 0))
+        // Engraving — list every SW part so "none" is explicit rather than merely absent.
+        if (swParts.Any(f => f.EngravedTextCount > 0))
         {
             lines.Add("");
             lines.Add("ENGRAVING");
-            lines.AddRange(swFiles.Select(f => $"  • {f.FileName}: {f.EngravingLabel}"));
+            lines.AddRange(swParts.Select(f => $"   • {f.FileName} — {f.EngravingLabel}"));
         }
 
         lines.Add("");
         lines.Add("PARTS");
-        foreach (var f in Files)
+        for (int i = 0; i < parts.Count; i++)
         {
-            var cfg = f.HasNonDefaultConfig ? $"  [{f.ConfigurationName}]" : "";
-            lines.Add($"  {f.FileName}{cfg}");
-            lines.Add($"     {f.GeometrySummary}");
-            lines.Add($"     {f.FullPath}");
+            var f = parts[i];
+            var cfg = f.HasNonDefaultConfig ? $"   [{f.ConfigurationName}]" : "";
+
+            lines.Add("");
+            lines.Add($"   {i + 1}.  {f.FileName}{cfg}");
+            lines.Add($"        {f.GeometryLine}");
+            if (f.FeatureLine is { } featureLine)
+                lines.Add($"        {featureLine}");
+            lines.Add($"        Folder:  {f.DirectoryPath}");
         }
 
         if (MatchReasons.Count > 0)
         {
             lines.Add("");
             lines.Add("TECHNICAL EVIDENCE");
-            lines.AddRange(MatchReasons.Select(r => $"  • {r}"));
+            lines.AddRange(MatchReasons.Select(r => $"   • {r}"));
         }
 
         return string.Join("\n", lines);

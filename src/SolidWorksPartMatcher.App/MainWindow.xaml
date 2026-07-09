@@ -342,7 +342,7 @@
                                             Click="GroupActionsButton_Click">
                                         <Button.ContextMenu>
                                             <ContextMenu>
-                                                <MenuItem Header="Match Details — why, and what differs"
+                                                <MenuItem Header="Match Details"
                                                           FontWeight="SemiBold"
                                                           Command="{Binding PlacementTarget.Tag.ShowMatchDetailsCommand,
                                                                     RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
