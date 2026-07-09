@@ -346,12 +346,18 @@ public sealed partial class MainViewModel : ObservableObject
             .ThenBy(c => c.Id)
             .ToList();
 
+        // Why each group was declared a match (SHA-256, exact geometry, mirror, STEP evidence vote,
+        // etc.) — indexed once for every cluster, not re-scanned per cluster.
+        var reasonsByCluster = MatchReasonAggregator.ReasonsByCluster(pairs, allMembers);
+
         _groups.Clear();
         for (int i = 0; i < sorted.Count; i++)
         {
             var cluster = sorted[i];
             var displayName = $"Match {i + 1}";
             var members = membersByCluster.GetValueOrDefault(cluster.Id, []);
+
+            var reasons = reasonsByCluster.GetValueOrDefault(cluster.Id, []);
 
             var fileVms = members
                 .Select(m =>
@@ -361,6 +367,7 @@ public sealed partial class MainViewModel : ObservableObject
                     return new MatchFileViewModel(
                         sf.Id, sf.NormalizedPath, fp.ConfigName,
                         fp.SourceFormat,
+                        fp,
                         _opener,
                         _loggerFactory.CreateLogger<MatchFileViewModel>());
                 })
@@ -370,7 +377,7 @@ public sealed partial class MainViewModel : ObservableObject
 
             _groups.Add(new MatchGroupViewModel(
                 cluster, displayName, fileVms, _repo,
-                _loggerFactory.CreateLogger<MatchGroupViewModel>()));
+                _loggerFactory.CreateLogger<MatchGroupViewModel>(), reasons));
         }
 
         RefreshFilter();

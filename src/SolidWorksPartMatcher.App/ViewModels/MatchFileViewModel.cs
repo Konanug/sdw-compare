@@ -2,6 +2,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
 using SolidWorksPartMatcher.Application.Interfaces;
+using SolidWorksPartMatcher.Domain.Models;
 using System.IO;
 
 namespace SolidWorksPartMatcher.App.ViewModels;
@@ -14,8 +15,47 @@ public sealed partial class MatchFileViewModel : ObservableObject
     public string? ConfigurationName { get; }
     public string SourceFormat { get; }
 
+    // ── Per-file facts, surfaced in the Match Details dialog ─────────────────────────────────
+    public int FaceCount { get; }
+    public double VolumeM3 { get; }
+
+    /// <summary>Engraved text features on this part (0 = none). Always 0 for STEP (no feature tree).</summary>
+    public int EngravedTextCount { get; }
+
+    /// <summary>True when this part's hole was cut with the Hole Wizard rather than a plain cut extrude.</summary>
+    public bool HasHoleWizard { get; }
+
+    /// <summary>True when this part has a plain (non-Hole-Wizard) cut feature.</summary>
+    public bool HasPlainCut { get; }
+
     public bool IsStepFile =>
         string.Equals(SourceFormat, "STEP", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// How this part's cut was modelled — only meaningful for SOLIDWORKS parts. Three distinct
+    /// states: a part with no cut features at all must not be reported as using a plain cut extrude,
+    /// which is what a plain <c>HasHoleWizard ? … : …</c> would wrongly claim.
+    /// </summary>
+    public string HoleSpecLabel =>
+        HasHoleWizard ? "Hole Wizard hole"
+        : HasPlainCut ? "plain cut extrude"
+        : "no cut features";
+
+    public string EngravingLabel =>
+        EngravedTextCount > 0 ? $"{EngravedTextCount} engraved text feature(s)" : "none";
+
+    /// <summary>Folder holding this part. The file name is shown separately, so it isn't repeated here.</summary>
+    public string DirectoryPath => Path.GetDirectoryName(FullPath) ?? FullPath;
+
+    /// <summary>Essential geometry values, shown for every part.</summary>
+    public string GeometryLine => $"Faces {FaceCount} · Volume {VolumeM3 * 1e6:0.##} cm³";
+
+    /// <summary>
+    /// Feature-derived facts (hole specification, engraving). Null for STEP, which has no feature
+    /// tree, so the details dialog simply omits the line rather than printing meaningless values.
+    /// </summary>
+    public string? FeatureLine =>
+        IsStepFile ? null : $"Hole: {HoleSpecLabel} · Engraving: {EngravingLabel}";
 
     // Shown in the UI when config is not the default.
     public bool HasNonDefaultConfig =>
@@ -39,6 +79,7 @@ public sealed partial class MatchFileViewModel : ObservableObject
         string fullPath,
         string? configurationName,
         string sourceFormat,
+        PartFingerprint fingerprint,
         ISolidWorksFileOpener opener,
         ILogger<MatchFileViewModel> logger)
     {
@@ -47,6 +88,11 @@ public sealed partial class MatchFileViewModel : ObservableObject
         FileName = Path.GetFileName(fullPath);
         ConfigurationName = configurationName;
         SourceFormat = sourceFormat;
+        FaceCount = fingerprint.FaceCount;
+        VolumeM3 = fingerprint.VolumeM3;
+        EngravedTextCount = PartFeatureFacts.EngravedTextCount(fingerprint);
+        HasHoleWizard = PartFeatureFacts.HasHoleWizard(fingerprint);
+        HasPlainCut = PartFeatureFacts.HasPlainCutFeature(fingerprint);
         _opener = opener;
         _logger = logger;
 

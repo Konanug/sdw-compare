@@ -26,6 +26,70 @@ public sealed partial class MatchGroupViewModel : ObservableObject
     public PartClassification Classification { get; }
     public string ClassificationLabel { get; }
 
+    /// <summary>
+    /// Why this group was declared a match — the distinct classification reasons of the pair
+    /// comparisons among its members, strongest evidence first (e.g. "SHA-256 match", "Proper rigid
+    /// transform confirmed (det(R)=1.000000)", "Under review — 3/4 geometry signals agree: …").
+    /// These are the raw/technical strings; the user-facing popup uses <see cref="FriendlyMatchReason"/>.
+    /// </summary>
+    public IReadOnlyList<string> MatchReasons { get; }
+
+    /// <summary>
+    /// A plain-language explanation of why the parts were grouped, written for a non-technical user.
+    /// Shown in the "Why was this matched?" popup. Built from the classification, plus a friendly
+    /// rendering of the geometry-vote evidence when present.
+    /// </summary>
+    public string FriendlyMatchReason
+    {
+        get
+        {
+            string baseMsg = Classification switch
+            {
+                PartClassification.BinaryDuplicate =>
+                    "These files are exact, byte-for-byte identical copies of each other.",
+                PartClassification.ExactGeometryMatch =>
+                    "These parts have the same shape and size.",
+                PartClassification.GeometryMatchMetadataVariant =>
+                    "These parts have the same shape and size, but differ in a detail such as material.",
+                PartClassification.EngravingVariant =>
+                    "These are the same part, differing only by an engraving or marking on the surface.",
+                PartClassification.RevisionFamily =>
+                    "These are closely related versions of the same part, with only small size differences.",
+                PartClassification.MirrorOrHandedVariant =>
+                    "These parts are mirror images of each other — like a left-hand and a right-hand version.",
+                PartClassification.PossibleMatch =>
+                    "These parts look very similar and may be the same. Please review them to confirm.",
+                PartClassification.ComparisonFailed =>
+                    "These parts couldn't be fully compared, so they've been grouped for you to check.",
+                _ => "These parts were grouped together for review.",
+            };
+
+            var evidence = FriendlyEvidence();
+            return evidence is null ? baseMsg : $"{baseMsg}\n\nWhat matched:\n{evidence}";
+        }
+    }
+
+    // Translates the geometry-vote reason (if any) into plain bullet points. Returns null when the
+    // group wasn't decided by the vote (e.g. an exact/binary match), so only relevant groups show it.
+    private string? FriendlyEvidence()
+    {
+        var vote = MatchReasons.FirstOrDefault(
+            r => r.Contains("signals agree", StringComparison.OrdinalIgnoreCase));
+        if (vote is null) return null;
+
+        var bullets = new List<string>();
+        if (vote.Contains("volume", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• They take up almost exactly the same amount of space.");
+        if (vote.Contains("face count", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• They have the same number of surfaces.");
+        if (vote.Contains("face-type", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• They're built from the same kinds of surfaces (flat, round, etc.).");
+        if (vote.Contains("signature", StringComparison.OrdinalIgnoreCase))
+            bullets.Add("• Their surfaces are shaped and sized almost identically.");
+
+        return bullets.Count == 0 ? null : string.Join("\n", bullets);
+    }
+
     private ReviewStatus _reviewStatus;
     public ReviewStatus ReviewStatus
     {
@@ -78,7 +142,8 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         string displayName,
         IReadOnlyList<MatchFileViewModel> files,
         IPartRepository repo,
-        ILogger<MatchGroupViewModel> logger)
+        ILogger<MatchGroupViewModel> logger,
+        IReadOnlyList<string>? matchReasons = null)
     {
         ClusterId = cluster.Id;
         DisplayName = displayName;
@@ -89,6 +154,7 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         _repo = repo;
         _logger = logger;
         Files = new ObservableCollection<MatchFileViewModel>(files);
+        MatchReasons = matchReasons ?? [];
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -191,28 +257,88 @@ public sealed partial class MatchGroupViewModel : ObservableObject
         }
     }
 
+    /// <summary>
+    /// Single "Match Details" dialog — replaces the former separate "Why was this matched?" and
+    /// "View Details" popups. Leads with the plain-language explanation, then calls out the two
+    /// differences a user most needs named per file (hole specification, engraving), then the
+    /// essential per-file values, and finally the raw technical evidence for anyone who wants it.
+    /// </summary>
     [RelayCommand]
-    private void ViewDetails()
+    private void ShowMatchDetails()
     {
-        var lines = new[]
-        {
-            $"Group:          {DisplayName}",
-            $"Canonical Name: {CanonicalName ?? "(none)"}",
-            $"Classification: {ClassificationLabel}",
-            $"Review Status:  {ReviewStatus}",
-            $"Files:          {Files.Count}",
-            "",
-            "Files:",
-        }.Concat(Files.Select(f =>
-            string.IsNullOrEmpty(f.ConfigurationName) || !f.HasNonDefaultConfig
-                ? $"  {f.FullPath}"
-                : $"  {f.FullPath}  [{f.ConfigurationName}]"));
-
         WpfMsgBox.Show(
-            string.Join("\n", lines),
-            $"Details — {DisplayName}",
+            BuildMatchDetailsText(),
+            "Match Details",
             WpfMsgBoxButton.OK,
             WpfMsgBoxImage.Information);
+    }
+
+    internal string BuildMatchDetailsText()
+    {
+        // Sorted by file name so the parts appear in a stable, predictable order and are easy to
+        // tell apart, and numbered + blank-line separated so each block reads as its own part.
+        var parts = Files.OrderBy(f => f.FileName, StringComparer.OrdinalIgnoreCase).ToList();
+
+        var lines = new List<string>
+        {
+            $"{DisplayName} — {ClassificationLabel}",
+            $"Name: {CanonicalName ?? "(none)"}",
+            $"Review status: {ReviewStatus}",
+            $"Parts: {parts.Count}",
+            "",
+            "WHY THESE WERE GROUPED",
+            FriendlyMatchReason,
+        };
+
+        // Hole specification — only a difference is worth calling out, and the user needs to know
+        // exactly which part is which. Meaningless for STEP (no feature tree), so ignore those.
+        var swParts = parts.Where(f => !f.IsStepFile).ToList();
+        var wizard = swParts.Where(f => f.HasHoleWizard).ToList();
+        var plainCut = swParts.Where(f => !f.HasHoleWizard).ToList();
+        if (wizard.Count > 0 && plainCut.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("HOLE SPECIFICATION — these differ");
+            // Use each part's own label: the non-wizard side may be a plain cut extrude, or may have
+            // no cut features at all — never assume the former.
+            lines.AddRange(wizard.Select(f => $"   • {f.FileName} — {f.HoleSpecLabel}"));
+            lines.AddRange(plainCut.Select(f => $"   • {f.FileName} — {f.HoleSpecLabel}"));
+            lines.Add("");
+            lines.Add("   The holes may sit in the same place, but they were modelled differently,");
+            lines.Add("   so these count as different engineering specifications.");
+        }
+
+        // Engraving — list every SW part so "none" is explicit rather than merely absent.
+        if (swParts.Any(f => f.EngravedTextCount > 0))
+        {
+            lines.Add("");
+            lines.Add("ENGRAVING");
+            lines.AddRange(swParts.Select(f => $"   • {f.FileName} — {f.EngravingLabel}"));
+        }
+
+        lines.Add("");
+        lines.Add("PARTS");
+        for (int i = 0; i < parts.Count; i++)
+        {
+            var f = parts[i];
+            var cfg = f.HasNonDefaultConfig ? $"   [{f.ConfigurationName}]" : "";
+
+            lines.Add("");
+            lines.Add($"   {i + 1}.  {f.FileName}{cfg}");
+            lines.Add($"        {f.GeometryLine}");
+            if (f.FeatureLine is { } featureLine)
+                lines.Add($"        {featureLine}");
+            lines.Add($"        Folder:  {f.DirectoryPath}");
+        }
+
+        if (MatchReasons.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("TECHNICAL EVIDENCE");
+            lines.AddRange(MatchReasons.Select(r => $"   • {r}"));
+        }
+
+        return string.Join("\n", lines);
     }
 
     [RelayCommand]

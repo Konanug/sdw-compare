@@ -93,6 +93,25 @@ public sealed class StepGeometryEstimatorTests
         (rawBb[0] * rawBb[1] * rawBb[2]).Should().BeGreaterThan(0.01 * 0.02 * 0.03 * 1.05);
     }
 
+    // One case per surface type, so a regression names the shape that broke.
+    //   Cylinder: radius is field 1; the axis (fields 2-4) stays in the key.
+    //   Cone:     half-angle (field 1) + axis (fields 3-5) in the key; radius (field 2) extracted.
+    //   Plane:    no radius — the whole descriptor is the key.
+    [Theory]
+    [InlineData("CYLINDER|0.005|0.0000|0.0000|1.0000", "CYLINDER|0.0000|0.0000|1.0000", new[] { 0.005 })]
+    [InlineData("CONE|0.100000|0.02|0.0000|0.0000|1.0000", "CONE|0.100000|0.0000|0.0000|1.0000", new[] { 0.02 })]
+    [InlineData("SPHERE|0.01", "SPHERE", new[] { 0.01 })]
+    [InlineData("TORUS|0.02|0.005", "TORUS", new[] { 0.02, 0.005 })]
+    [InlineData("PLANE|1.0000|0.0000|0.0000", "PLANE|1.0000|0.0000|0.0000", new double[0])]
+    public void ParseDescriptor_SeparatesRadiiFromShapeKey(
+        string descriptor, string expectedKey, double[] expectedRadii)
+    {
+        var (key, radii) = StepGeometryEstimator.ParseDescriptor(descriptor);
+
+        key.Should().Be(expectedKey);
+        radii.Should().Equal(expectedRadii);
+    }
+
     [Fact]
     public void EstimateSurfaceArea_NonCylinderShape_FallsBackToBoxFormula_NotZero()
     {

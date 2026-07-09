@@ -99,14 +99,25 @@ Duplicate detection runs a staged pipeline — hashing → metadata skim → fin
 candidate blocking → body-coincidence check → detailed comparison (only when needed) → union-find
 clustering → Excel export. It never compares every file against every other, and **only exact
 matches (identical bytes or confirmed rigid-body coincidence) auto-merge** — uncertain pairs are
-flagged for review, never silently merged.
+flagged for review, never silently merged. Fingerprints are cached by file hash + extractor version,
+so repeat scans skip re-opening unchanged parts in SOLIDWORKS.
+
+For STEP parts, the true (OpenCASCADE) volume is measured and combined with orientation-invariant
+shape signals — face count, surface-type mix, and a tolerance-aware surface match — in a small
+evidence vote. When enough signals agree, the pair is **flagged for review** rather than merged, so
+near-identical STEP exports aren't missed just because a radius differs in its last decimal. Every
+group can explain itself: the **"Why was this matched?"** item in a group's ⋮ menu shows a
+plain-language reason.
 
 Assembly comparison extracts real geometry per component from each STEP file (via the OpenCASCADE
 kernel), matches components by name with a geometric fallback for renames, and classifies each as
 Unchanged / Modified / Added / Removed. Position changes are detected by composing each occurrence's
 global placement through the assembly tree and comparing the two revisions.
 
-Architecture and design rules live in [.claude/CLAUDE.md](.claude/CLAUDE.md).
+**Project layout:** `src/…App` (WPF UI) · `…Domain` (pure models/scoring) · `…Application`
+(interfaces, orchestration) · `…SolidWorks` (COM automation) · `…Infrastructure` (SQLite, hashing,
+STEP parsing) · `…Excel` (report generation). The Domain project references no COM, WPF, SQLite, or
+Excel — all boundaries are enforced by project references.
 
 ---
 

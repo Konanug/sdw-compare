@@ -1,3 +1,5 @@
+using System.Globalization;
+
 namespace SolidWorksPartMatcher.Infrastructure.Step;
 
 /// <summary>
@@ -24,12 +26,18 @@ internal static class StepGeometryEstimator
         };
     }
 
+    // Descriptors are persisted (SQLite) and compared as exact strings, so every number in them must
+    // be formatted and parsed with the invariant culture. Under a comma-decimal locale the same
+    // geometry would otherwise serialise differently, and a cached signature written under one locale
+    // would fail to parse under another (radii → NaN → no match).
+    private static string Inv(FormattableString fs) => FormattableString.Invariant(fs);
+
     private static string BuildCylinderDescriptor(StepP21Reader reader, int surfId)
     {
         if (!reader.TryGetCylinderParams(surfId, out double r, out var axis))
             return "CYLINDER|PARSE_ERROR";
         CanonicalizeAxis(axis);
-        return $"CYLINDER|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}";
+        return Inv($"CYLINDER|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}");
     }
 
     private static string BuildPlaneDescriptor(StepP21Reader reader, int surfId)
@@ -37,7 +45,7 @@ internal static class StepGeometryEstimator
         if (!reader.TryGetPlaneNormal(surfId, out var n))
             return "PLANE|PARSE_ERROR";
         CanonicalizeAxis(n);
-        return $"PLANE|{n[0]:F4}|{n[1]:F4}|{n[2]:F4}";
+        return Inv($"PLANE|{n[0]:F4}|{n[1]:F4}|{n[2]:F4}");
     }
 
     private static string BuildConeDescriptor(StepP21Reader reader, int surfId)
@@ -45,21 +53,21 @@ internal static class StepGeometryEstimator
         if (!reader.TryGetConeParams(surfId, out double ha, out double r, out var axis))
             return "CONE|PARSE_ERROR";
         CanonicalizeAxis(axis);
-        return $"CONE|{ha:F6}|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}";
+        return Inv($"CONE|{ha:F6}|{r:R}|{axis[0]:F4}|{axis[1]:F4}|{axis[2]:F4}");
     }
 
     private static string BuildSphereDescriptor(StepP21Reader reader, int surfId)
     {
         if (!reader.TryGetSphereRadius(surfId, out double r))
             return "SPHERE|PARSE_ERROR";
-        return $"SPHERE|{r:R}";
+        return Inv($"SPHERE|{r:R}");
     }
 
     private static string BuildTorusDescriptor(StepP21Reader reader, int surfId)
     {
         if (!reader.TryGetTorusParams(surfId, out double R, out double r))
             return "TORUS|PARSE_ERROR";
-        return $"TORUS|{R:R}|{r:R}";
+        return Inv($"TORUS|{R:R}|{r:R}");
     }
 
     // Normalizes direction vector so the dominant component is positive.
@@ -77,6 +85,40 @@ internal static class StepGeometryEstimator
         // Suppress near-zero floating-point noise (treat −0 as 0)
         for (int i = 0; i < axis.Length; i++)
             if (Math.Abs(axis[i]) < 1e-9) axis[i] = 0.0;
+    }
+
+    /// <summary>
+    /// Splits a face descriptor produced by <see cref="BuildFaceDescriptor"/> into a shape key
+    /// (surface type + all non-radius parameters, compared exactly) and the radius value(s)
+    /// (compared with tolerance). This lets a tolerant signature comparison absorb the tiny radius
+    /// differences that the exact <c>{r:R}</c> formatting otherwise treats as a mismatch, while
+    /// still requiring the surface type and axis/angle to match exactly. Kept beside
+    /// <see cref="BuildFaceDescriptor"/> so the two stay in sync with the descriptor grammar.
+    /// </summary>
+    public static (string ShapeKey, double[] Radii) ParseDescriptor(string descriptor)
+    {
+        var parts = descriptor.Split('|');
+        // Invariant culture to match how Build*Descriptor wrote these numbers (see Inv above).
+        static double R(string s) => double.TryParse(
+            s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
+
+        // Radius positions per grammar (see the Build*Descriptor methods above):
+        //   CYLINDER|r|ax|ay|az        PLANE|nx|ny|nz         CONE|ha|r|ax|ay|az
+        //   SPHERE|r                   TORUS|R|r              OTHER|type / *|PARSE_ERROR
+        switch (parts[0])
+        {
+            case "CYLINDER" when parts.Length == 5:
+                return ($"CYLINDER|{parts[2]}|{parts[3]}|{parts[4]}", [R(parts[1])]);
+            case "CONE" when parts.Length == 6:
+                return ($"CONE|{parts[1]}|{parts[3]}|{parts[4]}|{parts[5]}", [R(parts[2])]);
+            case "SPHERE" when parts.Length == 2:
+                return ("SPHERE", [R(parts[1])]);
+            case "TORUS" when parts.Length == 3:
+                return ("TORUS", [R(parts[1]), R(parts[2])]);
+            default:
+                // PLANE, OTHER, PARSE_ERROR, or any malformed row — no radius, key is the whole string.
+                return (descriptor, []);
+        }
     }
 
     // ── Geometric property estimation ──────────────────────────────────────
