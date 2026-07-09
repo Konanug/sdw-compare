@@ -99,13 +99,60 @@ else {
     Write-Host ""
 }
 
+# ── Hide the viewer folder ────────────────────────────────────────────────────
+# The recipient should see only SolidWorksPartMatcher.App.exe. The app resolves the
+# viewer tools by exact path (Path.Combine + File.Exists) and never enumerates
+# directories, so hiding the folder is purely cosmetic and cannot break anything.
+if (Test-Path $viewerDst) {
+    $vi = Get-Item $viewerDst -Force
+    $vi.Attributes = $vi.Attributes -bor [IO.FileAttributes]::Hidden
+    Write-Host "  Viewer folder marked hidden." -ForegroundColor DarkGray
+}
+
 # ── Zip the output folder ─────────────────────────────────────────────────────
+# Built by hand rather than with Compress-Archive so that (a) each entry carries its
+# Windows attributes, letting attribute-aware extractors restore the hidden flag on
+# viewer/, and (b) entry names use '/' as the ZIP spec requires — Compress-Archive on
+# Windows PowerShell writes '\', which some third-party tools mis-extract as flat files.
 Write-Host ""
 Write-Host "Creating zip..." -ForegroundColor Yellow
-if (Test-Path $zipPath) { Remove-Item $zipPath -Force }
-Compress-Archive -Path "$outDir\*" -DestinationPath $zipPath
+if ([IO.File]::Exists($zipPath)) { [IO.File]::Delete($zipPath) }
 
-$fileCount = (Get-ChildItem $outDir -Recurse -File).Count
+Add-Type -AssemblyName System.IO.Compression
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+$sep = [string][char]92   # \
+$fwd = [string][char]47   # /
+
+$zipFs  = [IO.File]::Open($zipPath, 'Create')
+$zipArc = New-Object System.IO.Compression.ZipArchive($zipFs, [System.IO.Compression.ZipArchiveMode]::Create)
+try {
+    $dirEntry = $zipArc.CreateEntry('viewer' + $fwd)
+    $dirEntry.ExternalAttributes =
+        ([int]([IO.FileAttributes]::Directory -bor [IO.FileAttributes]::Hidden)) -shl 16
+
+    $root  = (Resolve-Path $outDir).Path.TrimEnd($sep) + $sep
+    # -Force: the viewer folder is hidden by now, so it would otherwise be skipped.
+    foreach ($f in Get-ChildItem $outDir -Recurse -File -Force) {
+        $rel   = $f.FullName.Substring($root.Length).Replace($sep, $fwd)
+        $entry = $zipArc.CreateEntry($rel, [System.IO.Compression.CompressionLevel]::Optimal)
+
+        $attrs = [int]$f.Attributes
+        if ($rel.StartsWith('viewer' + $fwd)) { $attrs = $attrs -bor [int][IO.FileAttributes]::Hidden }
+        $entry.ExternalAttributes = $attrs -shl 16
+
+        $es  = $entry.Open()
+        $src = [IO.File]::OpenRead($f.FullName)
+        $src.CopyTo($es)
+        $src.Close(); $es.Close()
+    }
+}
+finally {
+    $zipArc.Dispose()
+    $zipFs.Dispose()
+}
+
+$fileCount = (Get-ChildItem $outDir -Recurse -File -Force).Count
 $zipBytes  = (Get-Item $zipPath).Length
 $sizeMB    = [math]::Round($zipBytes / 1048576, 1)
 
@@ -115,5 +162,6 @@ Write-Host "  Publish folder : $outDir ($fileCount file(s))"
 Write-Host "  Zip ($sizeMB MB)   : $zipPath"
 Write-Host ""
 Write-Host "Distribute the ZIP. Recipients unzip and run SolidWorksPartMatcher.App.exe."
+Write-Host "Only that exe is visible; the bundled viewer/ folder is marked hidden."
 Write-Host "Requires: Windows 10/11 x64 + SolidWorks 2024 (licensed). No Python needed."
 Write-Host ""
