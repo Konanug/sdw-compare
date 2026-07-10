@@ -22,7 +22,7 @@
       - No .NET runtime needed (bundled in the output)
 #>
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.2.1"
 )
 
 $ErrorActionPreference = "Stop"

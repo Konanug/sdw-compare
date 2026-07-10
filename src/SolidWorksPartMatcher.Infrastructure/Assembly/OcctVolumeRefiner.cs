@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using SolidWorksPartMatcher.Domain.Models;
 using SolidWorksPartMatcher.Infrastructure.Step;
 using SolidWorksPartMatcher.Infrastructure.Step.Assembly;
@@ -32,10 +33,10 @@ public static class OcctVolumeRefiner
     /// Components not present in the result should keep their existing (heuristic) volume.
     /// Warnings are appended to <paramref name="warnings"/>, never thrown.
     /// </summary>
-    public static Dictionary<string, double> Refine(
+    public static Dictionary<string, OcctMeasurement> Refine(
         StepP21Reader reader, IReadOnlyList<AssemblyComponent> components, List<string> warnings)
     {
-        var result = new Dictionary<string, double>(StringComparer.Ordinal);
+        var result = new Dictionary<string, OcctMeasurement>(StringComparer.Ordinal);
         if (components.Count == 0) return result;
 
         var (exe, script) = FindTool();
@@ -64,31 +65,34 @@ public static class OcctVolumeRefiner
             File.WriteAllText(manifestPath,
                 JsonSerializer.Serialize(new { paths = pathToProductId.Keys.ToArray() }));
 
-            string stdout = RunTool(exe, script, manifestPath, warnings, out bool succeeded);
+            // Always request the real bounding box + surface area alongside the volume: the raw P21
+            // point cloud is unusable for embedded assembly components (a 3.7 cm³ part measured ~35 m
+            // — construction/placement points scattered across the assembly), so the box must come
+            // from the same kernel as the volume. Output: {path: {volume_m3, area_m2, bbox_m} | null}.
+            string stdout = RunTool(exe, script, manifestPath, warnings, "--with-bbox", out bool succeeded);
             if (!succeeded) return result; // warning already appended by RunTool
 
-            Dictionary<string, double?>? volumesByPath;
+            int missing = 0;
             try
             {
-                volumesByPath = JsonSerializer.Deserialize<Dictionary<string, double?>>(stdout);
+                var byPath = JsonSerializer.Deserialize<Dictionary<string, RichMeasurement?>>(stdout);
+                if (byPath is null) return result;
+                foreach (var (path, productId) in pathToProductId)
+                {
+                    if (byPath.TryGetValue(path, out var rv) && rv is { })
+                        result[productId] = new OcctMeasurement(rv.VolumeM3, rv.AreaM2, rv.BboxM);
+                    else
+                        missing++;
+                }
             }
             catch (JsonException ex)
             {
                 warnings.Add(
                     $"Real-volume refinement returned malformed output ({ex.Message}) — using " +
-                    "the bounding-box volume estimate for all components in this file.");
+                    "the bounding-box estimate for all components in this file.");
                 return result;
             }
-            if (volumesByPath is null) return result;
 
-            int missing = 0;
-            foreach (var (path, productId) in pathToProductId)
-            {
-                if (volumesByPath.TryGetValue(path, out var volume) && volume is { } v)
-                    result[productId] = v;
-                else
-                    missing++;
-            }
             if (missing > 0)
                 warnings.Add(
                     $"Real-volume refinement could not compute {missing} of {components.Count} " +
@@ -99,7 +103,7 @@ public static class OcctVolumeRefiner
             warnings.Add(
                 $"Real-volume refinement failed ({ex.Message}) — using the bounding-box volume " +
                 "estimate for all components in this file.");
-            return new Dictionary<string, double>(StringComparer.Ordinal);
+            return new Dictionary<string, OcctMeasurement>(StringComparer.Ordinal);
         }
         finally
         {
@@ -110,7 +114,8 @@ public static class OcctVolumeRefiner
     }
 
     private static string RunTool(
-        string exe, string? script, string manifestPath, List<string> warnings, out bool succeeded)
+        string exe, string? script, string manifestPath, List<string> warnings,
+        string? extraArg, out bool succeeded)
     {
         succeeded = false;
         var psi = new ProcessStartInfo(exe)
@@ -123,6 +128,7 @@ public static class OcctVolumeRefiner
             StandardErrorEncoding = Encoding.UTF8,
         };
         if (script is not null) psi.ArgumentList.Add(script);
+        if (extraArg is not null) psi.ArgumentList.Add(extraArg);
         psi.ArgumentList.Add(manifestPath);
 
         using var process = Process.Start(psi);
@@ -183,4 +189,16 @@ public static class OcctVolumeRefiner
         var result = new string(chars).Trim();
         return result.Length == 0 ? "component" : result;
     }
+
+    /// <summary>
+    /// Real OCCT measurements for one component. <see cref="AreaM2"/> and <see cref="BboxM"/> are
+    /// null unless the caller requested <c>withBoundingBox</c> (and OCCT could compute them).
+    /// </summary>
+    public sealed record OcctMeasurement(double VolumeM3, double? AreaM2, double[]? BboxM);
+
+    // Wire DTO for the --with-bbox JSON payload: {"volume_m3": .., "area_m2": .., "bbox_m": [..]}.
+    private sealed record RichMeasurement(
+        [property: JsonPropertyName("volume_m3")] double VolumeM3,
+        [property: JsonPropertyName("area_m2")] double? AreaM2,
+        [property: JsonPropertyName("bbox_m")] double[]? BboxM);
 }

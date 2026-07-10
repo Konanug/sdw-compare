@@ -191,12 +191,22 @@ public sealed class StepAssemblyStructureReader(StepP21Reader reader)
         // Deliberately does not touch structure/instance-count/matching/placement below — see
         // OcctVolumeRefiner's own doc comment for why. Any failure leaves the heuristic volume
         // in place for the affected component(s), with a warning; never throws.
-        var realVolumes = SolidWorksPartMatcher.Infrastructure.Assembly.OcctVolumeRefiner.Refine(
+        var occt = SolidWorksPartMatcher.Infrastructure.Assembly.OcctVolumeRefiner.Refine(
             reader, components, warnings);
-        if (realVolumes.Count > 0)
+        if (occt.Count > 0)
             for (int i = 0; i < components.Count; i++)
-                if (realVolumes.TryGetValue(components[i].ProductId, out var realVolume))
-                    components[i] = components[i] with { VolumeM3 = realVolume };
+                if (occt.TryGetValue(components[i].ProductId, out var m))
+                {
+                    // Real OCCT volume/box/area replace the crude P21-point-cloud estimates. The raw
+                    // point cloud is unreliable for embedded components (scattered construction
+                    // points), so the box/area come from the same kernel as the volume when present.
+                    var updated = components[i] with { VolumeM3 = m.VolumeM3 };
+                    if (m.BboxM is { Length: 3 })
+                        updated = updated with { SortedBoundingBoxM = m.BboxM };
+                    if (m.AreaM2 is { } area && area > 0)
+                        updated = updated with { SurfaceAreaM2 = area };
+                    components[i] = updated;
+                }
 
         // ── PRODUCT_DEFINITION → owning ProductId (forward walk: PD → FORMATION → PRODUCT) ──
         var productIdByPd = BuildProductIdByPd(warnings);

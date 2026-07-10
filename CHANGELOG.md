@@ -3,7 +3,43 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
-## [Unreleased]
+## [1.2.1] — 2026-07-10
+
+### Fixed
+
+- **Assembly comparison — real component bounding box and surface area (OpenCASCADE).** The
+  per-component bounding box and surface area are now measured by OCCT — the same kernel that
+  already provides the volume — as a tight, rotation-invariant oriented bounding box, instead of
+  the raw STEP point cloud. For embedded assembly components the point cloud scatters construction
+  and placement points across the whole assembly, which produced physically impossible boxes (a
+  3.7 cm³ part measured ~35 m and a surface area of ~19,000,000 cm²). Bounding box was already
+  excluded from the change classification, but it feeds the rename-matching similarity, so this also
+  makes matching more reliable.
+- **Assembly comparison — no more false renames.** A geometry-fallback rename (two differently-named
+  components paired purely by shape) now also requires the parts' actual surfaces to agree
+  (orientation-invariant face-signature agreement, robust to rotation). The coarse similarity score
+  alone was pairing nowhere-near-identical parts — a flat gasket with an L-bracket — as a "rename".
+  Such pairs now correctly report as Removed + Added.
+- **Assembly comparison — non-solid parts no longer read as "−100%".** A component with no measurable
+  OCCT volume (a non-solid shell/surface in the STEP file) is no longer reported as a
+  `Modified, −100%`; it is compared on shape and reported Unchanged when the shell matches, with a
+  clear note that the volume was not comparable.
+- **Assembly comparison — a 0% volume no longer shows a change tick.** A volume delta that rounds to
+  0.00% at the reported precision is treated as no change, so a part is never flagged with a Volume
+  change tick while its shown delta reads "0%" (tiny sub-0.005% wobbles between two exports are
+  noise, not a revision).
+
+### Changed
+
+- **3D viewer text.** The side-by-side and overlay labels and the overlay legend now use the app's
+  Segoe UI font throughout (the legend previously used a mismatched built-in VTK font on a dark
+  background box), are smaller and corner-anchored so long names stay inside the viewport, and the
+  legend is drawn as coloured, shadowed labels with no background panel.
+- Bundled tool: `compute_component_volume.py` gained a `--with-bbox` mode returning the OCCT bounding
+  box and surface area alongside the volume. **Rebuild the viewer bundle** (`tools\build_viewer.ps1`)
+  when producing a release so `compute_component_volume.exe` understands it.
+
+## [1.2.0] — 2026-07-10
 
 ### Changed
 
@@ -17,7 +53,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions
 ### Added
 
 - **Windows installer.** `installer\build_installer.ps1` wraps a publish folder into a single
-  `SolidWorksPartMatcher-Setup-v<version>.exe` (requires Inno Setup 6.3+). It installs per-user with no
+  `Tytle3DModelComparator-Setup-v<version>.exe` (requires Inno Setup 6.3+). It installs per-user with no
   admin prompt, adds a Start-menu shortcut and an uninstaller, and keeps the bundled Python and
   OpenCASCADE runtime out of sight in the install directory. Requires no changes to the application:
   the installed layout matches the zip layout, which is what the tool locator already expects.

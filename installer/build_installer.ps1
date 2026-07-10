@@ -23,7 +23,7 @@
     identifier, which older 6.x releases reject.
 #>
 param(
-    [string]$Version = "1.1.0"
+    [string]$Version = "1.2.1"
 )
 
 # Continue, not Stop: ISCC writes progress to stderr, which under "Stop" PowerShell

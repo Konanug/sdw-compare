@@ -36,13 +36,15 @@ _bootstrap_streams()
 import json
 
 MM3_TO_M3 = 1e-9  # OCCT normalizes to mm on import regardless of the file's authored unit.
+MM2_TO_M2 = 1e-6  # OCCT surface areas come out in mm².
+MM_TO_M = 1e-3    # OCCT lengths (bounding-box sizes) come out in mm.
 
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr, flush=True)
 
 
-def compute_one(path: str) -> float | None:
+def compute_one(path: str, with_bbox: bool = False):
     from build123d import import_step
     from OCP.BRepGProp import BRepGProp
     from OCP.GProp import GProp_GProps
@@ -61,33 +63,65 @@ def compute_one(path: str) -> float | None:
     # faces directly (the divergence theorem needs a closed boundary, not a TopoDS_Solid wrapper)
     # — confirmed to give the exact right answer both for known-volume fixtures (box, cylinder)
     # and for the real CE26209H01 snippets on both sides, with no observed regression.
-    shape = import_step(path)
+    shape = import_step(path).wrapped
     props = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape.wrapped, props)
-    volume_mm3 = props.Mass()
+    BRepGProp.VolumeProperties_s(shape, props)
+    volume_m3 = props.Mass() * MM3_TO_M3
 
-    return volume_mm3 * MM3_TO_M3
+    # Default output stays a bare volume for backward compatibility (StepPartVolumeRefiner and any
+    # older caller/bundle). Only when the caller passes --with-bbox do we return the richer object.
+    if not with_bbox:
+        return volume_m3
+
+    result = {"volume_m3": volume_m3, "area_m2": None, "bbox_m": None}
+
+    # Real surface area (mm² → m²). Best-effort: a failure here must not lose the volume.
+    try:
+        aprops = GProp_GProps()
+        BRepGProp.SurfaceProperties_s(shape, aprops)
+        result["area_m2"] = aprops.Mass() * MM2_TO_M2
+    except Exception as ex:
+        log(f"Surface area failed for '{path}': {ex!r}")
+
+    # Tight, rotation-invariant oriented bounding box (OBB). The raw P21 point cloud is unusable for
+    # embedded assembly components — construction points (LINE/placement origins) are scattered
+    # across the whole assembly, giving a physically impossible box (a 3.7 cm³ part measured ~35 m).
+    # The box must therefore come from the same CAD kernel that gives the volume. Sorted ascending,
+    # in metres. Best-effort, same as area.
+    try:
+        from OCP.Bnd import Bnd_OBB
+        from OCP.BRepBndLib import BRepBndLib
+        obb = Bnd_OBB()
+        BRepBndLib.AddOBB_s(shape, obb)
+        result["bbox_m"] = sorted(
+            2.0 * half * MM_TO_M for half in (obb.XHSize(), obb.YHSize(), obb.ZHSize()))
+    except Exception as ex:
+        log(f"Bounding box failed for '{path}': {ex!r}")
+
+    return result
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 1:
-        log("Usage: compute_component_volume.py <manifest.json>")
+    with_bbox = "--with-bbox" in argv
+    args = [a for a in argv if a != "--with-bbox"]
+    if len(args) != 1:
+        log("Usage: compute_component_volume.py [--with-bbox] <manifest.json>")
         return 2
 
-    with open(argv[0], "r", encoding="utf-8") as f:
+    with open(args[0], "r", encoding="utf-8") as f:
         manifest = json.load(f)
     paths = manifest["paths"]
 
-    results: dict[str, float | None] = {}
+    results: dict[str, object] = {}
     for path in paths:
         try:
-            results[path] = compute_one(path)
+            results[path] = compute_one(path, with_bbox)
         except Exception as ex:
             log(f"Failed to compute volume for '{path}': {ex!r}")
             results[path] = None
 
     ok = sum(1 for v in results.values() if v is not None)
-    log(f"Computed {ok}/{len(paths)} real volumes.")
+    log(f"Computed {ok}/{len(paths)} components ({'with bbox' if with_bbox else 'volume only'}).")
     json.dump(results, sys.stdout)
     sys.stdout.flush()
     return 0
