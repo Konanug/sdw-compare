@@ -6,7 +6,7 @@
     Run publish.ps1 first — this script packages what publish.ps1 produced, it does
     not build the app itself.
 
-    The result is one file, publish\SolidWorksPartMatcher-Setup-v<version>.exe, which
+    The result is one file, publish\Tytle3DModelComparator-Setup-v<version>.exe, which
     installs the app plus its bundled viewer\ folder and creates a Start-menu shortcut.
     Recipients never see the bundled Python/OpenCASCADE runtime.
 
@@ -23,7 +23,7 @@
     identifier, which older 6.x releases reject.
 #>
 param(
-    [string]$Version = "1.1.0"
+    [string]$Version = "1.2.1"
 )
 
 # Continue, not Stop: ISCC writes progress to stderr, which under "Stop" PowerShell
@@ -32,9 +32,9 @@ param(
 $ErrorActionPreference = "Continue"
 
 $repoRoot  = Split-Path $PSScriptRoot -Parent
-$sourceDir = Join-Path $repoRoot "publish\SolidWorksPartMatcher-v$Version"
-$issFile   = Join-Path $PSScriptRoot "SolidWorksPartMatcher.iss"
-$outFile   = Join-Path $repoRoot "publish\SolidWorksPartMatcher-Setup-v$Version.exe"
+$sourceDir = Join-Path $repoRoot "publish\Tytle3DModelComparator-v$Version"
+$issFile   = Join-Path $PSScriptRoot "Tytle3DModelComparator.iss"
+$outFile   = Join-Path $repoRoot "publish\Tytle3DModelComparator-Setup-v$Version.exe"
 
 # ── Locate the Inno Setup compiler ────────────────────────────────────────────
 $isccCandidates = @(
@@ -56,11 +56,11 @@ if (-not (Test-Path $sourceDir)) {
     throw "Publish folder not found: $sourceDir`nRun  .\publish.ps1 -Version $Version  first."
 }
 
-$exe = Join-Path $sourceDir "SolidWorksPartMatcher.App.exe"
+$exe = Join-Path $sourceDir "Tytle3DModelComparator.exe"
 if (-not (Test-Path $exe)) { throw "Expected app exe not found: $exe" }
 
 Write-Host ""
-Write-Host "=== SolidWorks Part Matcher -- installer v$Version ===" -ForegroundColor Cyan
+Write-Host "=== Tytle 3D Model Comparator -- installer v$Version ===" -ForegroundColor Cyan
 Write-Host "Source : $sourceDir"
 Write-Host "Output : $outFile"
 Write-Host "ISCC   : $iscc"

@@ -50,6 +50,11 @@ SEGOE_UI_PATH = r"C:\Windows\Fonts\segoeui.ttf"
 FONT_FILE = SEGOE_UI_PATH if os.path.exists(SEGOE_UI_PATH) else None
 
 
+def _short_name(name: str, limit: int = 44) -> str:
+    """Truncate a long file name so an in-canvas label never overruns the viewport."""
+    return name if len(name) <= limit else name[: limit - 1] + "…"
+
+
 # ── Custom interactor style ───────────────────────────────────────────────────
 
 class SWInteractorStyle(vtk.vtkInteractorStyleTrackballCamera):
@@ -166,7 +171,10 @@ elif side_by_side and len(paths) == 2:
         pl.subplot(0, i)
         pl.set_background("white")
         pl.add_mesh(mesh, color=PALETTE[i % len(PALETTE)], opacity=0.75)
-        pl.add_text(name, position="upper_edge", font_size=10, color="black", font_file=FONT_FILE)
+        # Anchor at the corner (not centered on the top edge) and keep the type small, so a long
+        # name grows inward and stays inside the viewport. Black on white, in the app's font.
+        pl.add_text(_short_name(name), position="upper_left", font_size=9,
+                    color="black", font_file=FONT_FILE)
         # Small XYZ triad, one per viewport, that tracks each viewport's own camera as the user
         # orbits it — lets the user compare orientation between the two parts even though each
         # viewport's camera moves independently.
@@ -221,7 +229,22 @@ else:
         color = PALETTE[i % len(PALETTE)]
         pl.add_mesh(mesh, color=color, opacity=0.75, label=name)
 
-    pl.add_legend(bcolor=(0.15, 0.15, 0.15), border=True)
+    # Legend in the app's font (Segoe UI), one line per file coloured to match its mesh. pyvista's
+    # add_legend() can only use a built-in VTK font family (which reads as cartoonish next to the
+    # rest of the app) and paints a filled background box; drawing each entry with add_text()
+    # instead keeps the type uniform with the app and needs no backing panel. shadow=True keeps the
+    # lighter palette colours legible on any background, and normalized viewport coordinates
+    # (viewport=True) keep every line inside the window when it is resized.
+    for i, path in enumerate(paths):
+        pl.add_text(
+            _short_name(os.path.basename(path)),
+            position=(0.015, 0.955 - i * 0.05),
+            viewport=True,
+            font_size=11,
+            color=PALETTE[i % len(PALETTE)],
+            font_file=FONT_FILE,
+            shadow=True,
+        )
     _apply_style(pl)
     print("PYVISTA_READY", flush=True)
     pl.show()

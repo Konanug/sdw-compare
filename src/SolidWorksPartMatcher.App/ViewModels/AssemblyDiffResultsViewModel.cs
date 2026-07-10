@@ -339,4 +339,5 @@ public sealed partial class AssemblyDiffResultsViewModel : ObservableObject
             WpfMsgBox.Show(ex.Message, "Export Error", WpfMsgBoxButton.OK, WpfMsgBoxImage.Error);
         }
     }
+
 }

@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-    Publishes SolidWorks Part Matcher as a single-file self-contained Windows x64 release
+    Publishes Tytle 3D Model Comparator as a single-file self-contained Windows x64 release
     and zips the output for distribution.
 
 .PARAMETER Version
@@ -22,22 +22,22 @@
       - No .NET runtime needed (bundled in the output)
 #>
 param(
-    [string]$Version = "1.0.0"
+    [string]$Version = "1.2.1"
 )
 
 $ErrorActionPreference = "Stop"
 
 $dotnet  = "C:\Program Files\dotnet\dotnet.exe"
 $project = "$PSScriptRoot\src\SolidWorksPartMatcher.App\SolidWorksPartMatcher.App.csproj"
-$outDir  = "$PSScriptRoot\publish\SolidWorksPartMatcher-v$Version"
-$zipPath = "$PSScriptRoot\publish\SolidWorksPartMatcher-v$Version.zip"
+$outDir  = "$PSScriptRoot\publish\Tytle3DModelComparator-v$Version"
+$zipPath = "$PSScriptRoot\publish\Tytle3DModelComparator-v$Version.zip"
 
 if (-not (Test-Path $dotnet)) {
     Write-Error ".NET SDK not found at '$dotnet'. Adjust the path or add dotnet to PATH."
 }
 
 Write-Host ""
-Write-Host "=== SolidWorks Part Matcher -- publish v$Version ===" -ForegroundColor Cyan
+Write-Host "=== Tytle 3D Model Comparator -- publish v$Version ===" -ForegroundColor Cyan
 Write-Host "Output folder : $outDir"
 Write-Host "Zip           : $zipPath"
 Write-Host ""
@@ -67,7 +67,7 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 # Verify the main exe exists.
-$exe = Join-Path $outDir "SolidWorksPartMatcher.App.exe"
+$exe = Join-Path $outDir "Tytle3DModelComparator.exe"
 if (-not (Test-Path $exe)) {
     Write-Error "Expected exe not found: $exe"
 }
@@ -100,7 +100,7 @@ else {
 }
 
 # ── Hide the viewer folder ────────────────────────────────────────────────────
-# The recipient should see only SolidWorksPartMatcher.App.exe. The app resolves the
+# The recipient should see only Tytle3DModelComparator.exe. The app resolves the
 # viewer tools by exact path (Path.Combine + File.Exists) and never enumerates
 # directories, so hiding the folder is purely cosmetic and cannot break anything.
 if (Test-Path $viewerDst) {
@@ -161,7 +161,7 @@ Write-Host "Done." -ForegroundColor Green
 Write-Host "  Publish folder : $outDir ($fileCount file(s))"
 Write-Host "  Zip ($sizeMB MB)   : $zipPath"
 Write-Host ""
-Write-Host "Distribute the ZIP. Recipients unzip and run SolidWorksPartMatcher.App.exe."
+Write-Host "Distribute the ZIP. Recipients unzip and run Tytle3DModelComparator.exe."
 Write-Host "Only that exe is visible; the bundled viewer/ folder is marked hidden."
 Write-Host "Requires: Windows 10/11 x64 + SolidWorks 2024 (licensed). No Python needed."
 Write-Host ""

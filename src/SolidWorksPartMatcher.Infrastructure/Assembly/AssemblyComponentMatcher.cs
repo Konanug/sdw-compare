@@ -1,3 +1,4 @@
+using System.Globalization;
 using SolidWorksPartMatcher.Application.Interfaces;
 using SolidWorksPartMatcher.Domain.Models;
 using SolidWorksPartMatcher.Infrastructure.Blocking;
@@ -17,6 +18,11 @@ namespace SolidWorksPartMatcher.Infrastructure.Assembly;
 /// geometric-fallback SIMILARITY score (<see cref="GeometricSimilarity"/>) that identifies
 /// probable renames — that's a different concern (which parts correspond to which) from
 /// deciding whether a confirmed-same part changed.
+///
+/// Exception: a component with no measurable volume on one or both sides (a non-solid
+/// shell/surface in the STEP file reports zero OCCT volume) has an undefined volume delta and
+/// must never read as a "-100% Modified"; such a pair falls back to the geometric-similarity
+/// score to decide Unchanged vs. Modified vs. Suspicious. See <see cref="ClassifyPair"/>.
 ///
 /// Position tracking is additive and orthogonal to shape classification: whether any instance of
 /// a part sits in a different place in the assembly is reported as its own "What changed" bullet
@@ -41,6 +47,16 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         MaterialProperties: 0.0,
         CustomProperties: 0.0,
         FilenameTokens: 0.0);
+
+    // A real solid always has strictly positive volume; a value below this floor means OCCT (or
+    // the bounding-box estimate) could not measure a closed solid — the part is stored as a
+    // non-solid shell/surface. 1e-12 m³ = 1e-3 mm³, far smaller than any real machined part, so it
+    // only ever catches genuinely unmeasurable geometry, never a tiny-but-real part.
+    private const double MinMeasurableVolumeM3 = 1e-12;
+
+    // Radii within this relative tolerance count as the same, so tiny STEP export rounding doesn't
+    // read as a shape difference (mirrors the main pipeline's StepMatchTolerances default).
+    private const double RadiusRelativeTolerance = 0.01;
 
     public AssemblyDiffSummary Diff(
         AssemblyStructure a,
@@ -125,33 +141,52 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         string key, AssemblyComponent compA, AssemblyComponent compB,
         AssemblyDiffTolerances tol, double? geometricSimilarity)
     {
-        double volDeltaPct = RelativeDeltaPercent(compA.VolumeM3, compB.VolumeM3);
         double saDeltaPct = RelativeDeltaPercent(compA.SurfaceAreaM2, compB.SurfaceAreaM2);
         int faceDelta = compB.FaceCount - compA.FaceCount;
 
         bool quantityChanged = compA.InstanceCount.HasValue && compB.InstanceCount.HasValue
             && compA.InstanceCount.Value != compB.InstanceCount.Value;
 
-        // Volume is the SOLE "did this part change" signal — see this class's own doc comment
-        // for why bounding box was removed from this decision entirely. tol.VolumeDeltaPercentThreshold
-        // is a near-zero floor (floating-point noise only), not a real tolerance: any genuine
-        // volume difference, however small, is reported as Modified.
-        bool volumeUnchanged = Math.Abs(volDeltaPct) <= tol.VolumeDeltaPercentThreshold;
+        // A non-positive volume is not a real measurement — it means OCCT (or the bounding-box
+        // estimate) found no closed solid, because the STEP file stores that part as a non-solid
+        // shell/surface (the real Test6 CE26209H01 case). That is a file-representation detail, NOT
+        // a physical change, so a part that measures zero on one side must never be reported as a
+        // "-100% Modified". When either side is unmeasurable the volume delta is undefined; classify
+        // on shape alone via the geometric-similarity score instead.
+        bool volumeMeasurable = compA.VolumeM3 >= MinMeasurableVolumeM3
+                             && compB.VolumeM3 >= MinMeasurableVolumeM3;
+        double? volDeltaPct = volumeMeasurable
+            ? RelativeDeltaPercent(compA.VolumeM3, compB.VolumeM3)
+            : null;
 
-        // Only one suspicion trigger remains: an EXACT-NAME match whose overall shape looks
-        // nothing alike (suspiciousNameCollision) — a real, distinct signal ("is this name being
-        // reused for a different part entirely?"), not a volume-based judgment call. The former
-        // second trigger ("matched by shape, but sizes are very different", gating a fallback
-        // rename-match's acceptance on its volume delta) was removed: once a fallback pairing
-        // clears the geometric-similarity bar, we have no more reliable way to independently
-        // second-guess it via size alone than we do for any other pair — that's the same reason
-        // bounding box was dropped from classification entirely (see this class's own doc
-        // comment). A confirmed rename with a big volume delta is just a big revision.
+        // Suspicion trigger: an EXACT-NAME match whose overall shape looks nothing alike
+        // (suspiciousNameCollision) — "is this name being reused for a different part entirely?".
+        // Not a volume-based judgment call; a confirmed rename with a big volume delta is just a
+        // big revision (the same reasoning that removed bounding box from classification entirely).
         AssemblyDiffType diffType;
         bool suspiciousNameCollision = false;
 
-        if (volumeUnchanged)
+        if (!volumeMeasurable)
         {
+            // No usable volume signal — decide on shape alone. Identical shape → Unchanged (with a
+            // "volume not comparable" note); clearly different shape → Suspicious; in between →
+            // Modified. This is what stops an accurately-reported zero volume reading as Modified.
+            double similarity = geometricSimilarity ?? GeometricSimilarity(compA, compB);
+            if (similarity >= tol.GeometricSimilarityMatchThreshold)
+                diffType = AssemblyDiffType.Unchanged;
+            else if (similarity < tol.SuspiciousMatchThreshold)
+            {
+                diffType = AssemblyDiffType.SuspiciousMatch;
+                suspiciousNameCollision = true;
+            }
+            else
+                diffType = AssemblyDiffType.Modified;
+        }
+        else if (Math.Abs(volDeltaPct!.Value) <= tol.VolumeDeltaPercentThreshold)
+        {
+            // Volume is the SOLE change signal. tol.VolumeDeltaPercentThreshold is a near-zero
+            // floating-point floor, not a real tolerance: any genuine volume difference, however
+            // small, is reported as Modified.
             diffType = AssemblyDiffType.Unchanged;
         }
         else
@@ -163,9 +198,7 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
                 suspiciousNameCollision = true;
             }
             else
-            {
                 diffType = AssemblyDiffType.Modified;
-            }
         }
 
         // Position comparison is additive and independent of DiffType (see class doc): a coarse
@@ -178,7 +211,7 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
             quantityChanged, compA.InstanceCount, compB.InstanceCount,
             suspiciousNameCollision,
             geometricSimilarity.HasValue && !suspiciousNameCollision,
-            diffType, volDeltaPct, positionChanged);
+            diffType, volDeltaPct, positionChanged, volumeUnmeasurable: !volumeMeasurable);
 
         return new AssemblyComponentDiff(
             key, compA, compB, diffType, quantityChanged,
@@ -193,7 +226,8 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
     private static List<string> BuildReasons(
         bool quantityChanged, int? instanceCountA, int? instanceCountB,
         bool suspiciousNameCollision, bool matchedByGeometry,
-        AssemblyDiffType diffType, double volDeltaPct, bool? positionChanged)
+        AssemblyDiffType diffType, double? volDeltaPct, bool? positionChanged,
+        bool volumeUnmeasurable)
     {
         var reasons = new List<string>();
 
@@ -210,13 +244,22 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
             if (matchedByGeometry)
                 reasons.Add("Same shape, different name (likely renamed).");
 
-            // Modified is now reachable ONLY via a nonzero volume delta, so this always has
-            // something real to say — no more "different overall size" fallback for a change
-            // that couldn't otherwise be explained.
             if (diffType == AssemblyDiffType.Modified)
-                reasons.Add(volDeltaPct > 0
-                    ? $"Volume increased by {Math.Abs(volDeltaPct):0.####}%."
-                    : $"Volume decreased by {Math.Abs(volDeltaPct):0.####}%.");
+            {
+                if (volDeltaPct is { } v)
+                    reasons.Add(v > 0
+                        ? $"Volume increased by {Math.Abs(v):0.####}%."
+                        : $"Volume decreased by {Math.Abs(v):0.####}%.");
+                else
+                    // Modified on shape alone because the volume could not be measured.
+                    reasons.Add("Shape changed (volume could not be measured — non-solid geometry).");
+            }
+            else if (volumeUnmeasurable && diffType == AssemblyDiffType.Unchanged)
+            {
+                // An accurately-reported zero/undefined volume is a non-solid file representation,
+                // not a real change — say so instead of silently reporting "no differences".
+                reasons.Add("Volume not comparable (non-solid geometry); shape is unchanged.");
+            }
         }
 
         // Position is reported unconditionally — additive to (and never suppressed by) the shape
@@ -245,6 +288,13 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
         AssemblyDiffTolerances tol,
         List<AssemblyComponentDiff> diffs)
     {
+        // A fallback pairing must clear the coarse similarity bar AND an orientation-invariant
+        // face-signature agreement (the actual surfaces must match, robust to how the part is
+        // rotated). The signature gate is only applied when both components carry a signature —
+        // always true for real B-Rep parts; a component with no faces would have been dropped
+        // upstream, so an empty signature only occurs for hand-built test fixtures.
+        double sigGate = tol.RenameSignatureAgreementThreshold;
+
         while (unmatchedA.Count > 0 && unmatchedB.Count > 0)
         {
             double bestScore = -1;
@@ -254,11 +304,20 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
                 for (int j = 0; j < unmatchedB.Count; j++)
                 {
                     double score = GeometricSimilarity(unmatchedA[i], unmatchedB[j]);
-                    if (score > bestScore) { bestScore = score; bestI = i; bestJ = j; }
+                    if (score <= bestScore) continue;
+                    if (score < tol.GeometricSimilarityMatchThreshold) continue;
+                    if (sigGate > 0
+                        && unmatchedA[i].FaceGeometricSignature is { Count: > 0 }
+                        && unmatchedB[j].FaceGeometricSignature is { Count: > 0 }
+                        && OrientationInvariantSignatureAgreement(
+                            unmatchedA[i].FaceGeometricSignature,
+                            unmatchedB[j].FaceGeometricSignature) < sigGate)
+                        continue; // coarse stats agree but the real surfaces do not — not a rename
+                    bestScore = score; bestI = i; bestJ = j;
                 }
             }
 
-            if (bestScore < tol.GeometricSimilarityMatchThreshold) break;
+            if (bestI < 0) break; // no remaining pair clears both gates → leave as Removed / Added
 
             var compA = unmatchedA[bestI];
             var compB = unmatchedB[bestJ];
@@ -268,6 +327,80 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
             string key = $"{compA.MatchKey} → {compB.MatchKey}";
             diffs.Add(ClassifyPair(key, compA, compB, tol, geometricSimilarity: bestScore));
         }
+    }
+
+    /// <summary>
+    /// Fraction (0..1) of faces that agree between two components' signatures, ignoring orientation
+    /// and position — surface TYPE plus radius/size only. Robust to a genuine rename that was stored
+    /// rotated (whose exact, axis-bearing signatures would disagree), yet still separates two
+    /// genuinely different shapes (their surface types and radii don't line up). Greedy multiset
+    /// pairing over max(faceCountA, faceCountB); 0 when either signature is missing.
+    /// </summary>
+    internal static double OrientationInvariantSignatureAgreement(
+        IReadOnlyList<string>? sigA, IReadOnlyList<string>? sigB)
+    {
+        if (sigA is null || sigB is null || sigA.Count == 0 || sigB.Count == 0) return 0.0;
+
+        var bByKey = new Dictionary<string, List<(double[] Radii, bool Used)>>(StringComparer.Ordinal);
+        foreach (var d in sigB)
+        {
+            var (key, radii) = OrientationInvariantKey(d);
+            if (!bByKey.TryGetValue(key, out var list)) bByKey[key] = list = [];
+            list.Add((radii, false));
+        }
+
+        int matched = 0;
+        foreach (var d in sigA)
+        {
+            var (key, radii) = OrientationInvariantKey(d);
+            if (!bByKey.TryGetValue(key, out var candidates)) continue;
+            for (int i = 0; i < candidates.Count; i++)
+            {
+                if (candidates[i].Used) continue;
+                if (RadiiWithinTolerance(radii, candidates[i].Radii, RadiusRelativeTolerance))
+                {
+                    candidates[i] = (candidates[i].Radii, true);
+                    matched++;
+                    break;
+                }
+            }
+        }
+
+        return (double)matched / Math.Max(sigA.Count, sigB.Count);
+    }
+
+    // Strips a face descriptor down to an orientation-invariant key + radius/size values: the
+    // surface type (and half-angle for cones) plus its radii, dropping the axis/normal direction.
+    // Grammar (see StepGeometryEstimator.BuildFaceDescriptor):
+    //   CYLINDER|r|ax|ay|az   PLANE|nx|ny|nz   CONE|ha|r|ax|ay|az   SPHERE|r   TORUS|R|r
+    private static (string Key, double[] Radii) OrientationInvariantKey(string descriptor)
+    {
+        var parts = descriptor.Split('|');
+        static double R(string s) => double.TryParse(
+            s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
+
+        return parts[0] switch
+        {
+            "CYLINDER" when parts.Length == 5 => ("CYLINDER", [R(parts[1])]),
+            "CONE" when parts.Length == 6 => ($"CONE|{parts[1]}", [R(parts[2])]),
+            "SPHERE" when parts.Length == 2 => ("SPHERE", [R(parts[1])]),
+            "TORUS" when parts.Length == 3 => ("TORUS", [R(parts[1]), R(parts[2])]),
+            "PLANE" => ("PLANE", []),
+            _ => (parts[0], []), // OTHER, PARSE_ERROR
+        };
+    }
+
+    private static bool RadiiWithinTolerance(double[] a, double[] b, double relTol)
+    {
+        if (a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+        {
+            if (double.IsNaN(a[i]) || double.IsNaN(b[i])) return false;
+            double max = Math.Max(Math.Abs(a[i]), Math.Abs(b[i]));
+            if (max == 0) continue; // both zero → equal
+            if (Math.Abs(a[i] - b[i]) / max > relTol) return false;
+        }
+        return true;
     }
 
     private double GeometricSimilarity(AssemblyComponent a, AssemblyComponent b)
