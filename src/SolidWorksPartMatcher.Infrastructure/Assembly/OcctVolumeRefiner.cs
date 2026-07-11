@@ -192,7 +192,8 @@ public static class OcctVolumeRefiner
 
     /// <summary>
     /// Real OCCT measurements for one component. <see cref="AreaM2"/> and <see cref="BboxM"/> are
-    /// null unless the caller requested <c>withBoundingBox</c> (and OCCT could compute them).
+    /// null when OCCT could not compute them (e.g. a degenerate shape); <see cref="VolumeM3"/> is
+    /// always present when the component appears in the result.
     /// </summary>
     public sealed record OcctMeasurement(double VolumeM3, double? AreaM2, double[]? BboxM);
 
