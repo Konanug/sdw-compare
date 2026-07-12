@@ -3,6 +3,64 @@
 All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/); versions follow [SemVer](https://semver.org/).
 
+## [1.2.2] — 2026-07-11
+
+Duplicate detection. Two fixes to how parts are classified — one of which was presenting a
+mirrored part as a confirmed match — plus recognition of engraved STEP parts.
+
+### Fixed
+
+- **A mirrored part could be reported as a confirmed match.** Stage 3.5 (the face-signature
+  comparison) overwrote the classification unconditionally, without the guards the later stages
+  carry. A face descriptor records a surface's type, axis and radius but **not its position**, and
+  the axis direction is deliberately sign-normalised — so a part that is left/right-handed purely
+  because of where its holes sit produces an *identical* face signature to its mirror. Stage 3.5
+  therefore called it an exact match, and the stages that exist to settle handedness are skipped for
+  a mirror, so nothing corrected it. Mirrored pairs are now correctly held as
+  `MirrorOrHandedVariant` for review, never auto-confirmed.
+
+- **Engraved SOLIDWORKS parts were being hidden.** The engraving check correctly identified them by
+  suppressing the engraving feature and comparing the base geometry — and then Stage 3.5 saw the
+  different face count (which *is* the engraving) and overwrote the verdict with "distinct", which
+  is filtered out of the results. Engraved SLDPRT pairs are surfaced again.
+
+- **Engraved pairs could be dropped before they were ever compared.** Candidate pairs are bucketed
+  by quantised volume, and the volume bucket was an exact match with no tolerance. The bucket is
+  100 mm³ wide and a typical text engraving removes 5–100 mm³, so a plain part and its engraved twin
+  frequently landed in different buckets and were never compared at all. Neighbouring volume buckets
+  are now included.
+
+### Added
+
+- **Engraved STEP parts are now detected.** A STEP file has no feature tree, so the engraving check
+  above cannot run on one — and an engraving adds hundreds of tiny faces, which every other check
+  reads as "a different part". Engravings are now recognised from the geometry itself: the bounding
+  box is unchanged, the volume has barely moved, there are far more faces, the surface area has gone
+  *up* (letter walls are new surface), and every one of the plain part's surfaces is still present.
+  Such a pair is grouped as an **engraving variant, for review** — never as a confirmed match.
+
+  This requires the OpenCASCADE tool to be present (it ships with the app). Without it, part volume
+  and surface area are estimated *from the bounding box*, so two different parts of the same size
+  would appear identical on every measurement — the check refuses to run rather than risk a false
+  match.
+
+### Changed
+
+- **STEP parts are now measured by OpenCASCADE**, not estimated. Volume, surface area and a tight,
+  rotation-invariant bounding box now all come from the CAD kernel — the same change made for
+  assembly comparison in 1.2.1, applied to duplicate detection. Part matching gets more accurate as
+  a result.
+
+- **STEP edge and vertex counts are now real** (they were previously recorded as zero, which made
+  two-thirds of the topology comparison a constant). An identical part exported twice scores exactly
+  as before; only parts that genuinely differ now score lower.
+
+### Upgrade note
+
+The first scan after upgrading re-reads every STEP file, because the extra measurements above
+invalidate cached STEP fingerprints. This is fast — it does **not** re-open anything in SOLIDWORKS.
+SLDPRT fingerprints are unaffected and stay cached.
+
 ## [1.2.1] — 2026-07-10
 
 ### Fixed
