@@ -86,6 +86,7 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
                 suppressed_geometry_json TEXT,
                 source_format TEXT NOT NULL DEFAULT 'SLDPRT',
                 face_geometric_signature TEXT,
+                geometry_source TEXT,
                 FOREIGN KEY(scanned_file_id) REFERENCES scanned_files(id)
             );
             CREATE UNIQUE INDEX IF NOT EXISTS ix_fingerprints_per_file
@@ -175,6 +176,14 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         MigrateIfNeeded(8,
             "CREATE INDEX IF NOT EXISTS ix_fingerprints_cache_lookup " +
             "ON fingerprints(file_sha256, config_name, extractor_version);");
+
+        // Migration v9: geometry_source records whether a STEP fingerprint's volume/area/bounding box
+        // were measured by the CAD kernel ("occt") or merely estimated from the P21 point cloud
+        // ("step-estimate"). The cache key (sha, config, extractor_version) does NOT encode whether
+        // OCCT was available at extraction time, so without this a machine that scanned STEP before
+        // Python/OCCT was installed would serve estimate-based fingerprints from cache forever.
+        // Safe variant: fresh databases already have the column from CREATE TABLE above.
+        MigrateIfNeededSafe(9, "ALTER TABLE fingerprints ADD COLUMN geometry_source TEXT;");
     }
 
     private void MigrateIfNeeded(int version, string sql)
@@ -310,10 +319,11 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
                 mass_kg, center_of_mass_m, face_count, edge_count, vertex_count, feature_count,
                 feature_type_histogram, material, custom_properties, solidworks_version,
                 extractor_version_label, extracted_utc, chirality_sign, com_offset_in_bb,
-                sketch_text_cut_count, suppressed_geometry_json, source_format, face_geometric_signature)
+                sketch_text_cut_count, suppressed_geometry_json, source_format, face_geometric_signature,
+                geometry_source)
             VALUES (@id,@fileId,@sha,@cfg,@extVer,@solid,@surface,@bb,@vol,@sa,@mass,@com,
                     @face,@edge,@vertex,@feat,@featHist,@mat,@props,@swVer,@extLabel,@extracted,@chirality,@comOff,
-                    @sketchTextCuts,@suppGeom,@srcFmt,@faceSig)
+                    @sketchTextCuts,@suppGeom,@srcFmt,@faceSig,@geomSrc)
             ON CONFLICT(scanned_file_id, config_name, extractor_version) DO NOTHING
             """;
         cmd.Parameters.AddWithValue("@id", fp.Id.ToString());
@@ -359,6 +369,7 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
             fp.FaceGeometricSignature != null
                 ? JsonSerializer.Serialize(fp.FaceGeometricSignature)
                 : (object)DBNull.Value);
+        cmd.Parameters.AddWithValue("@geomSrc", fp.GeometrySource ?? (object)DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -415,6 +426,11 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
         if (r.FieldCount > 27 && !r.IsDBNull(27))
             faceSig = JsonSerializer.Deserialize<List<string>>(r.GetString(27));
 
+        // Ordinal 28 — appended last (see the class note: new columns must never be inserted, or every
+        // subsequent read silently shifts). Null on a pre-v9 row, which is exactly right: we do not
+        // know how that row's geometry was obtained, so it must not be trusted as kernel-measured.
+        string? geometrySource = r.FieldCount > 28 && !r.IsDBNull(28) ? r.GetString(28) : null;
+
         return new PartFingerprint(
             Id: Guid.Parse(r.GetString(0)),
             ScannedFileId: Guid.Parse(r.GetString(1)),
@@ -450,7 +466,8 @@ public sealed class SqlitePartRepository : IPartRepository, IDisposable
             SuppressedEdgeCount: suppGeom?.EdgeCount,
             SuppressedVertexCount: suppGeom?.VertexCount,
             SourceFormat: sourceFormat,
-            FaceGeometricSignature: faceSig);
+            FaceGeometricSignature: faceSig,
+            GeometrySource: geometrySource);
     }
 
     // ── Candidate pairs ────────────────────────────────────────────────────

@@ -83,6 +83,82 @@ public sealed class FingerprintCacheTests : IDisposable
         (await repo.GetFingerprintAsync("OTHER-SHA", "Default", 8, ct)).Should().BeNull();
     }
 
+    [Fact]
+    public async Task RoundTrip_PreservesEveryFieldReadByOrdinal_IncludingTheStepOnes()
+    {
+        // ReadFingerprint reads columns by ORDINAL INDEX. A new column inserted anywhere but the end
+        // silently shifts every subsequent read — a whole-table corruption that compiles, runs, and
+        // returns plausible-looking garbage. This test is the guard: it round-trips the fields most
+        // likely to be shifted, and would fail loudly if a column were ever inserted rather than
+        // appended. GeometrySource is the newest (ordinal 28, migration v9).
+        var ct = CancellationToken.None;
+        using var repo = new SqlitePartRepository(_db, NullLogger<SqlitePartRepository>.Instance);
+
+        var runId = Guid.NewGuid();
+        await repo.CreateScanRunAsync(
+            new ScanRun(runId, DateTime.UtcNow, null, ["C:/parts"], "test", ScanStatus.Running, null), ct);
+
+        var fileId = Guid.NewGuid();
+        await repo.UpsertScannedFileAsync(
+            new ScannedFile(fileId, "c:/parts/a.step", "a.step", 123,
+                DateTime.UtcNow, "SHA-STEP", "C:/parts", FileStatus.Hashed, null),
+            runId, ct);
+
+        var fp = MakeFp(Guid.NewGuid(), fileId, sha: "SHA-STEP", version: 102) with
+        {
+            SortedBoundingBoxM = [0.011, 0.022, 0.033],
+            VolumeM3 = 6.1e-06,
+            SurfaceAreaM2 = 2.2e-03,
+            FaceCount = 84,
+            EdgeCount = 252,          // real STEP counts as of extractor v102 — were hardcoded 0
+            VertexCount = 168,
+            Material = null,
+            SourceFormat = "STEP",
+            FaceGeometricSignature = ["CYLINDER|0.003|0|0|1", "PLANE|0|0|1"],
+            GeometrySource = "occt",
+        };
+        await repo.UpsertFingerprintAsync(fp, ct);
+
+        var back = await repo.GetFingerprintAsync("SHA-STEP", "Default", 102, ct);
+
+        back.Should().NotBeNull();
+        back!.SortedBoundingBoxM.Should().Equal(0.011, 0.022, 0.033);
+        back.VolumeM3.Should().Be(6.1e-06);
+        back.SurfaceAreaM2.Should().Be(2.2e-03);
+        back.FaceCount.Should().Be(84);
+        back.EdgeCount.Should().Be(252);
+        back.VertexCount.Should().Be(168);
+        back.SourceFormat.Should().Be("STEP");
+        back.FaceGeometricSignature.Should().Equal("CYLINDER|0.003|0|0|1", "PLANE|0|0|1");
+        back.GeometrySource.Should().Be("occt");
+    }
+
+    [Fact]
+    public async Task RoundTrip_NullGeometrySource_StaysNull_SoAPreV9RowIsNeverTrustedAsKernelMeasured()
+    {
+        // A row written before migration v9 reads back GeometrySource = null. That must NOT silently
+        // become "occt": we do not know how its geometry was obtained, and StepEngravingDetector
+        // refuses to compare fine-grained deltas on anything but kernel-measured geometry.
+        var ct = CancellationToken.None;
+        using var repo = new SqlitePartRepository(_db, NullLogger<SqlitePartRepository>.Instance);
+
+        var runId = Guid.NewGuid();
+        await repo.CreateScanRunAsync(
+            new ScanRun(runId, DateTime.UtcNow, null, ["C:/parts"], "test", ScanStatus.Running, null), ct);
+
+        var fileId = Guid.NewGuid();
+        await repo.UpsertScannedFileAsync(
+            new ScannedFile(fileId, "c:/parts/old.sldprt", "old.sldprt", 1,
+                DateTime.UtcNow, "SHA-OLD", "C:/parts", FileStatus.Hashed, null),
+            runId, ct);
+
+        await repo.UpsertFingerprintAsync(MakeFp(Guid.NewGuid(), fileId, "SHA-OLD", 8), ct);
+
+        var back = await repo.GetFingerprintAsync("SHA-OLD", "Default", 8, ct);
+
+        back!.GeometrySource.Should().BeNull();
+    }
+
     public void Dispose()
     {
         foreach (var suffix in new[] { "", "-wal", "-shm" })

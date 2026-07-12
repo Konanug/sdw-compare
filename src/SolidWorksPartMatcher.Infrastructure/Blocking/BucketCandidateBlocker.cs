@@ -101,6 +101,22 @@ public sealed class BucketCandidateBlocker : ICandidateBlocker
                     yield return $"bc={bc}|bb={bx + dx},{by + dy},{bz + dz}|vol={vol}";
                 }
 
+        // Volume neighbours on the PRIMARY cell only. The vol= token above is an exact quantized
+        // equality in every other key, and the bb loop never offsets it — so two parts whose volumes
+        // straddle a quantum boundary are never even generated as a candidate. That is not a corner
+        // case for an engraved pair: the quantum is 1e-7 m³ = 100 mm³ while a text engraving removes
+        // roughly 5–100 mm³, so the two volumes land in different quanta often, and for a deep or
+        // large engraving they are guaranteed to. Two parts with an identical bounding box always
+        // share the primary cell (an inward cut does not change the extents), so offsetting volume
+        // here — and only here — reaches them, tolerating a 2-quantum spread from both sides.
+        //
+        // Deliberately NOT applied across all 27 bb cells (that triples the key count for the
+        // corner-of-a-corner case of straddling a bb AND a volume boundary at once), and deliberately
+        // not replaced by a bb-only bucket (which drops the volume constraint entirely — a library of
+        // identically-sized plates with different cut-outs would collapse into one bucket).
+        yield return $"bc={bc}|bb={bx},{by},{bz}|vol={vol - 1}";
+        yield return $"bc={bc}|bb={bx},{by},{bz}|vol={vol + 1}";
+
         // Volume-only bucket as fallback
         yield return $"bc={bc}|vol={vol}|sa={sa}";
     }

@@ -47,7 +47,22 @@ public sealed record PartFingerprint(
     int? SuppressedVertexCount,
     // "SLDPRT" | "STEP" — determines comparison routing and feature availability.
     string SourceFormat = "SLDPRT",
-    // Sorted list of canonical face descriptors extracted directly from P21 geometry.
-    // Populated for STEP files by StepGeometryExtractor; null for SLDPRT files.
-    // Two fingerprints with identical sorted signatures have provably the same B-Rep surfaces.
-    IReadOnlyList<string>? FaceGeometricSignature = null);
+    // Sorted list of canonical face descriptors. Populated for BOTH formats — STEP from the P21
+    // geometry (StepGeometryExtractor), SLDPRT from the SW COM face enumeration — in the same
+    // grammar, so the two are directly comparable. Two fingerprints with identical sorted signatures
+    // have the same B-Rep surface types/axes/radii (but NOT necessarily the same surface positions).
+    IReadOnlyList<string>? FaceGeometricSignature = null,
+    // How VolumeM3 / SurfaceAreaM2 / SortedBoundingBoxM were obtained, for STEP:
+    //   "occt"          — measured by the CAD kernel. Trustworthy for fine-grained deltas.
+    //   "step-estimate" — derived from the raw P21 point cloud (OCCT unavailable). NOT trustworthy
+    //                     for fine-grained deltas: StepGeometryEstimator's volume (0.55 × bbVolume)
+    //                     and surface area (the box formula) are PURE FUNCTIONS OF THE BOUNDING BOX,
+    //                     so two different parts sharing a box get bit-identical volume AND area.
+    //                     Any comparison that gates on "same box + same volume + same area" would
+    //                     pass vacuously — see StepEngravingDetector, which refuses to run on these.
+    //   null            — SLDPRT (always kernel-measured by SolidWorks), or a pre-v9 cached row.
+    //
+    // Deliberately nullable with a trailing default so the SLDPRT extractor needs no change and its
+    // version stays at sw2024-real-8 — bumping it would force a full SolidWorks re-open of every
+    // SLDPRT file for a field SLDPRT does not use. Do not "tidy" this into a required parameter.
+    string? GeometrySource = null);
