@@ -1,7 +1,7 @@
-using System.Globalization;
 using SolidWorksPartMatcher.Application.Interfaces;
 using SolidWorksPartMatcher.Domain.Models;
 using SolidWorksPartMatcher.Infrastructure.Blocking;
+using SolidWorksPartMatcher.Infrastructure.Step;
 using SolidWorksPartMatcher.Infrastructure.Step.Assembly;
 
 namespace SolidWorksPartMatcher.Infrastructure.Assembly;
@@ -338,70 +338,8 @@ public sealed class AssemblyComponentMatcher(ICandidateScorer scorer)
     /// </summary>
     internal static double OrientationInvariantSignatureAgreement(
         IReadOnlyList<string>? sigA, IReadOnlyList<string>? sigB)
-    {
-        if (sigA is null || sigB is null || sigA.Count == 0 || sigB.Count == 0) return 0.0;
-
-        var bByKey = new Dictionary<string, List<(double[] Radii, bool Used)>>(StringComparer.Ordinal);
-        foreach (var d in sigB)
-        {
-            var (key, radii) = OrientationInvariantKey(d);
-            if (!bByKey.TryGetValue(key, out var list)) bByKey[key] = list = [];
-            list.Add((radii, false));
-        }
-
-        int matched = 0;
-        foreach (var d in sigA)
-        {
-            var (key, radii) = OrientationInvariantKey(d);
-            if (!bByKey.TryGetValue(key, out var candidates)) continue;
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                if (candidates[i].Used) continue;
-                if (RadiiWithinTolerance(radii, candidates[i].Radii, RadiusRelativeTolerance))
-                {
-                    candidates[i] = (candidates[i].Radii, true);
-                    matched++;
-                    break;
-                }
-            }
-        }
-
-        return (double)matched / Math.Max(sigA.Count, sigB.Count);
-    }
-
-    // Strips a face descriptor down to an orientation-invariant key + radius/size values: the
-    // surface type (and half-angle for cones) plus its radii, dropping the axis/normal direction.
-    // Grammar (see StepGeometryEstimator.BuildFaceDescriptor):
-    //   CYLINDER|r|ax|ay|az   PLANE|nx|ny|nz   CONE|ha|r|ax|ay|az   SPHERE|r   TORUS|R|r
-    private static (string Key, double[] Radii) OrientationInvariantKey(string descriptor)
-    {
-        var parts = descriptor.Split('|');
-        static double R(string s) => double.TryParse(
-            s, NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : double.NaN;
-
-        return parts[0] switch
-        {
-            "CYLINDER" when parts.Length == 5 => ("CYLINDER", [R(parts[1])]),
-            "CONE" when parts.Length == 6 => ($"CONE|{parts[1]}", [R(parts[2])]),
-            "SPHERE" when parts.Length == 2 => ("SPHERE", [R(parts[1])]),
-            "TORUS" when parts.Length == 3 => ("TORUS", [R(parts[1]), R(parts[2])]),
-            "PLANE" => ("PLANE", []),
-            _ => (parts[0], []), // OTHER, PARSE_ERROR
-        };
-    }
-
-    private static bool RadiiWithinTolerance(double[] a, double[] b, double relTol)
-    {
-        if (a.Length != b.Length) return false;
-        for (int i = 0; i < a.Length; i++)
-        {
-            if (double.IsNaN(a[i]) || double.IsNaN(b[i])) return false;
-            double max = Math.Max(Math.Abs(a[i]), Math.Abs(b[i]));
-            if (max == 0) continue; // both zero → equal
-            if (Math.Abs(a[i] - b[i]) / max > relTol) return false;
-        }
-        return true;
-    }
+        => FaceSignatureMatcher.AgreementFraction(
+            sigA, sigB, FaceSignatureMatcher.OrientationInvariant, RadiusRelativeTolerance);
 
     private double GeometricSimilarity(AssemblyComponent a, AssemblyComponent b)
         => scorer.Score(ToSyntheticFingerprint(a), ToSyntheticFingerprint(b), FallbackScoringWeights);

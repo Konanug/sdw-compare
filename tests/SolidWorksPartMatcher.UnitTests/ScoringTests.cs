@@ -69,6 +69,58 @@ public sealed class ScoringTests
         score.Should().BeLessThan(0.40);
     }
 
+    // ── Effect of giving STEP real edge/vertex counts (extractor v102) ───────────────────────────
+    // They were hardcoded to 0, and ScalarSimilarity(0, 0) returns a free 1.0 — so two of
+    // TopologySimilarity's three terms were always perfect for a STEP pair, flooring it at 0.667
+    // regardless of the geometry. Making them honest changes scores; these pin which way.
+
+    [Fact]
+    public void IdenticalStepPair_RealEdgeVertexCounts_DoNotChangeTheScore()
+    {
+        // The dominant true-positive class: the same part exported twice. Equal counts score 1.0
+        // either way, so the fix cannot cost us a single genuine duplicate.
+        var withZeros = MakeFp(faces: 40, edges: 0, verts: 0, mat: null);
+        var withReal = MakeFp(faces: 40, edges: 120, verts: 80, mat: null);
+
+        var zeroScore = _scorer.Score(withZeros, withZeros, ScoringWeights.Default);
+        var realScore = _scorer.Score(withReal, withReal, ScoringWeights.Default);
+
+        realScore.Should().BeApproximately(zeroScore, 1e-9);
+    }
+
+    [Fact]
+    public void EngravedStepPair_WithHonestTopology_StillClearsTheCandidateThreshold()
+    {
+        // An engraving wrecks topology similarity (30 → 120 faces, 90 → 400 edges). With honest
+        // counts that term collapses to near zero, costing ~0.077 of the 0.15 topology weight. The
+        // pair must still clear CandidateThreshold = 0.40, or Stage 3.7 would never get to see it.
+        var plain = MakeFp(vol: 1.0e-5, sa: 2.0e-3, bb: [0.010, 0.050, 0.080],
+            faces: 30, edges: 90, verts: 60, mat: null);
+        var engraved = MakeFp(vol: 0.9998e-5, sa: 2.016e-3, bb: [0.010, 0.050, 0.080],
+            faces: 120, edges: 400, verts: 260, mat: null);
+
+        var score = _scorer.Score(plain, engraved, ScoringWeights.Default);
+
+        score.Should().BeGreaterThan(0.40);
+    }
+
+    [Fact]
+    public void GenuinelyDifferentTopology_ScoresLowerOnceEdgeVertexCountsAreReal()
+    {
+        // The point of the change: topology becomes a real discriminator instead of contributing a
+        // constant. Two parts with the same size but wildly different topology must now score lower
+        // than they did when their edge/vertex counts were both a free 1.0.
+        var aZeros = MakeFp(sha: "a", faces: 20, edges: 0, verts: 0, mat: null);
+        var bZeros = MakeFp(sha: "b", faces: 200, edges: 0, verts: 0, mat: null);
+        var aReal = MakeFp(sha: "a", faces: 20, edges: 60, verts: 40, mat: null);
+        var bReal = MakeFp(sha: "b", faces: 200, edges: 700, verts: 500, mat: null);
+
+        var inflated = _scorer.Score(aZeros, bZeros, ScoringWeights.Default);
+        var honest = _scorer.Score(aReal, bReal, ScoringWeights.Default);
+
+        honest.Should().BeLessThan(inflated);
+    }
+
     [Fact]
     public void ScoreWeightsSumToOne()
     {

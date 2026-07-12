@@ -1,21 +1,29 @@
 using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
+using SolidWorksPartMatcher.Infrastructure.Assembly;
 
 namespace SolidWorksPartMatcher.Infrastructure.Step;
 
 /// <summary>
-/// Computes real CAD-kernel (OCCT) volumes for whole STEP part files, replacing the crude
-/// <see cref="StepGeometryEstimator.EstimateVolume"/> estimate used for STEP fingerprints. Reuses
-/// the same bundled tool as the assembly path (<c>tools/compute_component_volume.py</c>, which
-/// computes a real volume for any STEP path and batches many via a manifest), but for whole part
-/// files rather than assembly-component snippets — so it writes no snippets and touches no assembly
-/// code.
+/// Measures whole STEP part files with the real CAD kernel (OCCT), replacing
+/// <see cref="StepGeometryEstimator"/>'s crude estimates in a STEP fingerprint. Reuses the same
+/// bundled tool as the assembly path (<c>tools/compute_component_volume.py</c>, which measures any
+/// STEP path and batches many via a manifest), but for whole part files rather than
+/// assembly-component snippets — so it writes no snippets and touches no assembly code.
+///
+/// Returns volume, surface area AND a tight, rotation-invariant oriented bounding box (the tool's
+/// <c>--with-bbox</c> mode). All three matter: the estimator's volume (0.55 × bbVolume) and surface
+/// area (the box formula) are pure functions of the bounding box, so without the kernel two
+/// different parts sharing a box get bit-identical volume and area — see
+/// <see cref="Domain.Models.PartFingerprint.GeometrySource"/>.
 ///
 /// Degrades gracefully: if the tool is missing (no Python/build123d, no bundled exe), the subprocess
 /// errors, times out, or one file fails to parse, the affected files simply aren't in the returned
-/// map and the caller keeps the existing estimate. The only exception it propagates is
-/// <see cref="OperationCanceledException"/>, so a cancelled scan aborts promptly.
+/// map and the caller keeps the existing estimate. That includes an OLD bundled exe that predates
+/// <c>--with-bbox</c>: it sees two positional args, exits 2, and we degrade like any other failure.
+/// The only exception it propagates is <see cref="OperationCanceledException"/>, so a cancelled scan
+/// aborts promptly.
 /// </summary>
 public static class StepPartVolumeRefiner
 {
@@ -23,16 +31,16 @@ public static class StepPartVolumeRefiner
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(120);
 
     /// <summary>
-    /// Returns file path → real volume (m³) for every STEP file the tool could measure. Paths not
-    /// present in the result should keep their existing (estimated) volume. Diagnostics go to
+    /// Returns file path → real OCCT measurements for every STEP file the tool could measure. Paths
+    /// not present in the result should keep their existing (estimated) geometry. Diagnostics go to
     /// <paramref name="log"/>. Cancelling <paramref name="ct"/> kills the subprocess (whole tree)
     /// and throws <see cref="OperationCanceledException"/>.
     /// </summary>
-    public static async Task<Dictionary<string, double>> RefineAsync(
+    public static async Task<Dictionary<string, OcctVolumeRefiner.OcctMeasurement>> RefineAsync(
         IReadOnlyList<string> stepFilePaths, Action<string>? log = null, CancellationToken ct = default)
     {
-        var result = new Dictionary<string, double>(StringComparer.Ordinal);
-        if (stepFilePaths.Count == 0) return result;
+        var empty = new Dictionary<string, OcctVolumeRefiner.OcctMeasurement>(StringComparer.Ordinal);
+        if (stepFilePaths.Count == 0) return empty;
 
         // Honour cancellation before doing any work, so an already-cancelled scan aborts even when
         // the OCCT tool is absent (which would otherwise return early and look like a clean degrade).
@@ -41,8 +49,8 @@ public static class StepPartVolumeRefiner
         var (exe, script) = FindTool();
         if (string.IsNullOrEmpty(exe))
         {
-            log?.Invoke("Real STEP volume unavailable (OCCT tool not found) — using bounding-box estimates.");
-            return result;
+            log?.Invoke("Real STEP geometry unavailable (OCCT tool not found) — using bounding-box estimates.");
+            return empty;
         }
 
         string tempDir = Path.Combine(
@@ -55,20 +63,14 @@ public static class StepPartVolumeRefiner
                 JsonSerializer.Serialize(new { paths = stepFilePaths.ToArray() }));
 
             var (stdout, ok) = await RunToolAsync(exe, script, manifestPath, log, ct);
-            if (!ok) return result;
+            if (!ok) return empty;
 
-            Dictionary<string, double?>? volumesByPath;
-            try { volumesByPath = JsonSerializer.Deserialize<Dictionary<string, double?>>(stdout); }
+            try { return ParseMeasurements(stdout); }
             catch (JsonException ex)
             {
-                log?.Invoke($"Real STEP volume returned malformed output ({ex.Message}) — using estimates.");
-                return result;
+                log?.Invoke($"Real STEP geometry returned malformed output ({ex.Message}) — using estimates.");
+                return empty;
             }
-            if (volumesByPath is null) return result;
-
-            foreach (var (path, volume) in volumesByPath)
-                if (volume is { } v && v > 0)
-                    result[path] = v;
         }
         catch (OperationCanceledException)
         {
@@ -76,16 +78,41 @@ public static class StepPartVolumeRefiner
         }
         catch (Exception ex)
         {
-            log?.Invoke($"Real STEP volume failed ({ex.Message}) — using estimates.");
-            return new Dictionary<string, double>(StringComparer.Ordinal);
+            log?.Invoke($"Real STEP geometry failed ({ex.Message}) — using estimates.");
+            return empty;
         }
         finally
         {
             try { Directory.Delete(tempDir, recursive: true); } catch { /* best effort */ }
         }
+    }
+
+    /// <summary>
+    /// Parses the tool's <c>--with-bbox</c> payload: <c>{path: {volume_m3, area_m2, bbox_m} | null}</c>.
+    /// Only entries with a positive volume are kept — a null entry (that one file failed) or a
+    /// non-positive volume (non-solid geometry) is not a measurement. Separated from the subprocess
+    /// plumbing so the wire contract is testable without spawning anything.
+    /// </summary>
+    internal static Dictionary<string, OcctVolumeRefiner.OcctMeasurement> ParseMeasurements(string stdout)
+    {
+        var result = new Dictionary<string, OcctVolumeRefiner.OcctMeasurement>(StringComparer.Ordinal);
+        var byPath = JsonSerializer.Deserialize<Dictionary<string, RichMeasurement?>>(stdout);
+        if (byPath is null) return result;
+
+        foreach (var (path, m) in byPath)
+            if (m is { } v && v.VolumeM3 > 0)
+                result[path] = new OcctVolumeRefiner.OcctMeasurement(v.VolumeM3, v.AreaM2, v.BboxM);
 
         return result;
     }
+
+    // Wire DTO for the --with-bbox JSON payload. Kept private and local rather than shared with
+    // OcctVolumeRefiner's identical DTO: this is a serialization contract, and coupling the two
+    // would mean a change made for the assembly path silently alters how part files deserialize.
+    private sealed record RichMeasurement(
+        [property: System.Text.Json.Serialization.JsonPropertyName("volume_m3")] double VolumeM3,
+        [property: System.Text.Json.Serialization.JsonPropertyName("area_m2")] double? AreaM2,
+        [property: System.Text.Json.Serialization.JsonPropertyName("bbox_m")] double[]? BboxM);
 
     private static async Task<(string Stdout, bool Succeeded)> RunToolAsync(
         string exe, string? script, string manifestPath, Action<string>? log, CancellationToken ct)
@@ -100,12 +127,13 @@ public static class StepPartVolumeRefiner
             StandardErrorEncoding = Encoding.UTF8,
         };
         if (script is not null) psi.ArgumentList.Add(script);
+        psi.ArgumentList.Add("--with-bbox");
         psi.ArgumentList.Add(manifestPath);
 
         using var process = Process.Start(psi);
         if (process is null)
         {
-            log?.Invoke("Real STEP volume failed to start — using estimates.");
+            log?.Invoke("Real STEP geometry failed to start — using estimates.");
             return (string.Empty, false);
         }
 
@@ -128,7 +156,7 @@ public static class StepPartVolumeRefiner
             try { await Task.WhenAll(stdoutTask, stderrTask); } catch { /* pipes torn down */ }
 
             if (ct.IsCancellationRequested) throw; // user cancelled the scan
-            log?.Invoke($"Real STEP volume timed out after {Timeout.TotalSeconds:F0}s — using estimates.");
+            log?.Invoke($"Real STEP geometry timed out after {Timeout.TotalSeconds:F0}s — using estimates.");
             return (string.Empty, false);
         }
 
@@ -138,7 +166,7 @@ public static class StepPartVolumeRefiner
         if (process.ExitCode != 0)
         {
             var tail = stderr.Length > 500 ? stderr[^500..] : stderr;
-            log?.Invoke($"Real STEP volume exited with code {process.ExitCode} — using estimates.{(tail.Length > 0 ? $" ({tail.Trim()})" : "")}");
+            log?.Invoke($"Real STEP geometry exited with code {process.ExitCode} — using estimates.{(tail.Length > 0 ? $" ({tail.Trim()})" : "")}");
             return (string.Empty, false);
         }
 

@@ -19,8 +19,12 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
     // Bump when the face descriptor format OR the volume source changes so cached fingerprints are
     // invalidated. v101/"step-p21-2": VolumeM3 is now the real OCCT volume when available (the scan
     // orchestrator overrides the estimate via StepPartVolumeRefiner), falling back to the estimate.
-    public const string VersionLabel = "step-p21-2";
-    public const int Version = 101;
+    // v102/"step-p21-3": EdgeCount/VertexCount are now real (were hardcoded 0, which floored
+    // TopologySimilarity at 0.667 for every STEP pair — two of its three terms scored a free 1.0);
+    // SurfaceAreaM2 and SortedBoundingBoxM are now also overridden with the real OCCT values; and
+    // GeometrySource records which of the two happened.
+    public const string VersionLabel = "step-p21-3";
+    public const int Version = 102;
 
     public PartFingerprint? Extract(ScannedFile file)
     {
@@ -77,9 +81,17 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
 
         int solidBodyCount = Math.Max(1, reader.GetManifoldSolidCount());
 
+        // Real topology counts, straight off the P21 entity table — no extra parsing, the whole DATA
+        // section is already in memory. One EDGE_CURVE per topological edge, one VERTEX_POINT per
+        // vertex. These are comparable STEP-to-STEP (which is what TopologySimilarity needs, since it
+        // compares ratios) even though they won't equal SolidWorks' own counts exactly.
+        int edgeCount = reader.EntityIdsOfType("EDGE_CURVE").Count();
+        int vertexCount = reader.EntityIdsOfType("VERTEX_POINT").Count();
+
         logger.LogInformation(
-            "STEP {File}: {Faces} faces, {Types} surface types, vol≈{Vol:E3}m³, sig[0]={Sig0}",
-            file.FileName, faces.Count, faceTypeHist.Count, volumeM3,
+            "STEP {File}: {Faces} faces, {Edges} edges, {Verts} vertices, {Types} surface types, " +
+            "vol≈{Vol:E3}m³, sig[0]={Sig0}",
+            file.FileName, faces.Count, edgeCount, vertexCount, faceTypeHist.Count, volumeM3,
             descriptors.Count > 0 ? descriptors[0] : "(none)");
 
         return new PartFingerprint(
@@ -96,8 +108,8 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
             MassKg: null,
             CenterOfMassM: null,
             FaceCount: faces.Count,
-            EdgeCount: 0,
-            VertexCount: 0,
+            EdgeCount: edgeCount,
+            VertexCount: vertexCount,
             FeatureCount: 0,
             FeatureTypeHistogram: faceTypeHist,   // face-type distribution for cross-STEP scoring
             Material: null,
@@ -116,7 +128,10 @@ public sealed class StepGeometryExtractor(ILogger<StepGeometryExtractor> logger)
             SuppressedEdgeCount: null,
             SuppressedVertexCount: null,
             SourceFormat: "STEP",
-            FaceGeometricSignature: descriptors.AsReadOnly());
+            FaceGeometricSignature: descriptors.AsReadOnly(),
+            // Everything above is P21-estimated. The scan orchestrator's OCCT pass overrides the
+            // volume/area/bounding box and upgrades this to "occt" when the kernel is available.
+            GeometrySource: "step-estimate");
     }
 
 }

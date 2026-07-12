@@ -122,7 +122,17 @@ public sealed class ScanOrchestrationService(
                     : extractor.ExtractorVersion;
 
                 var cached = await repo.GetFingerprintAsync(sha, "Default", extractorVersion, cancellationToken);
-                if (cached != null)
+
+                // A cached STEP fingerprint whose geometry was only ESTIMATED (OCCT was unavailable
+                // when it was extracted) is treated as a miss. The cache key does not encode whether
+                // the kernel was available, so without this a machine that first scanned STEP before
+                // Python/OCCT was installed would serve estimate-based geometry from cache forever —
+                // and engraving detection, which refuses to run on estimated geometry, would silently
+                // never fire. Re-extracting is a cheap pure-C# P21 parse; if OCCT is still missing we
+                // simply land on the estimate again.
+                bool cachedButEstimated = cached != null && isStep && cached.GeometrySource != "occt";
+
+                if (cached != null && !cachedButEstimated)
                 {
                     templateBySha[sha] = cached;
                     cacheHits++;
@@ -130,23 +140,29 @@ public sealed class ScanOrchestrationService(
                 }
                 else
                 {
+                    if (cachedButEstimated)
+                        logger.LogInformation(
+                            "Re-extracting {File}: cached STEP geometry was estimated, not kernel-measured",
+                            file.FileName);
                     misses.Add((sha, file, isStep));
                 }
             }
 
-            // Pass 2 — real OCCT volumes for STEP misses, in one batched subprocess. Replaces the
-            // crude bounding-box estimate with a real CAD-kernel volume for the STEP fingerprint;
-            // degrades to the estimate (empty map) when the OCCT tool is absent.
-            var realStepVolByPath = new Dictionary<string, double>(StringComparer.Ordinal);
+            // Pass 2 — real OCCT geometry for STEP misses, in one batched subprocess. Replaces the
+            // crude P21 estimates with real CAD-kernel values: the volume, the surface area, and a
+            // tight rotation-invariant oriented bounding box. Degrades to the estimates (empty map)
+            // when the OCCT tool is absent.
+            var realStepGeomByPath =
+                new Dictionary<string, Assembly.OcctVolumeRefiner.OcctMeasurement>(StringComparer.Ordinal);
             var stepMissPaths = misses
                 .Where(m => m.IsStep && stepExtractor != null)
                 .Select(m => m.File.NormalizedPath)
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
             if (stepMissPaths.Count > 0)
-                realStepVolByPath = await StepPartVolumeRefiner.RefineAsync(
+                realStepGeomByPath = await StepPartVolumeRefiner.RefineAsync(
                     stepMissPaths,
-                    msg => logger.LogInformation("STEP volume: {Msg}", msg),
+                    msg => logger.LogInformation("STEP geometry: {Msg}", msg),
                     cancellationToken);
 
             // Pass 3 — extract the misses.
@@ -160,10 +176,24 @@ public sealed class ScanOrchestrationService(
                     {
                         // Pure C# path: parse P21 directly — no SolidWorks COM needed for STEP.
                         template = stepExtractor.Extract(file);
-                        // Override the estimated volume with the real OCCT volume when available.
+
+                        // Override the P21 estimates with the real OCCT measurements when available.
+                        // All three must come from the same kernel: the estimated volume (0.55 ×
+                        // bbVolume) and surface area (the box formula) are pure functions of the
+                        // bounding box, so mixing a real volume with an estimated box would leave two
+                        // of the three numbers derived from the third. GeometrySource records which
+                        // way it went — downstream (StepEngravingDetector) refuses to compare
+                        // fine-grained deltas on estimated geometry. Same accept-guards as the
+                        // assembly path (StepAssemblyStructureReader).
                         if (template != null
-                            && realStepVolByPath.TryGetValue(file.NormalizedPath, out var realVol))
-                            template = template with { VolumeM3 = realVol };
+                            && realStepGeomByPath.TryGetValue(file.NormalizedPath, out var m))
+                        {
+                            template = template with { VolumeM3 = m.VolumeM3, GeometrySource = "occt" };
+                            if (m.BboxM is { Length: 3 } bbox && bbox.All(d => d > 0))
+                                template = template with { SortedBoundingBoxM = bbox };
+                            if (m.AreaM2 is { } area && area > 0)
+                                template = template with { SurfaceAreaM2 = area };
+                        }
                     }
                     else if (isStep)
                     {
@@ -236,97 +266,32 @@ public sealed class ScanOrchestrationService(
                 // holes actually sit in the same positions. The verdict is applied after Stage 5.
                 var (holeConflict, aUsesWizard) = HoleSpecConflict(fpA, fpB);
 
-                PartClassification cls;
-                string reason;
-                string comparatorVersion = "coarse-1";
+                // Everything up to (but not including) the SolidWorks COM stages is pure geometry.
+                // Extracted so the classification ladder — and in particular the two guards on Stage
+                // 3.5, each of which fixes a real bug — can be regression-tested without a DI graph,
+                // a SolidWorks install, or a display. See ClassifyGeometrySignals.
+                var verdict = ClassifyGeometrySignals(
+                    fpA, fpB, score, nameA, nameB, isBinaryDup, isMirror, mirrorReason);
 
-                if (isBinaryDup)
-                {
-                    cls = PartClassification.BinaryDuplicate;
-                    reason = "SHA-256 match";
-                }
-                else if (isMirror)
-                {
-                    cls = PartClassification.MirrorOrHandedVariant;
-                    reason = mirrorReason!;
-                }
-                else
-                {
-                    // Primary: suppression-based comparison (requires suppression to succeed).
-                    var (isSuppressedEngraving, suppEngReason) =
-                        DetectEngravingVariantBySuppressedGeometry(fpA, fpB);
-                    if (isSuppressedEngraving)
-                    {
-                        cls = PartClassification.EngravingVariant;
-                        reason = suppEngReason!;
-                    }
-                    // Fallback: suppression failed or wasn't attempted, but the SketchTextCutCount
-                    // field tells us one part has a text-sketch feature and the other doesn't.
-                    // A text engraving (CutExtrusion) removes material and adds faces, which lowers
-                    // the coarse score — so use a lower threshold than ExactGeometryMatch.
-                    else if ((fpA.SketchTextCutCount > 0) != (fpB.SketchTextCutCount > 0) && score >= 0.60)
-                    {
-                        cls = PartClassification.EngravingVariant;
-                        var (engFile, engCount, plainFile) = fpA.SketchTextCutCount > 0
-                            ? (nameA, fpA.SketchTextCutCount, nameB)
-                            : (nameB, fpB.SketchTextCutCount, nameA);
-                        reason =
-                            $"Engraving differs: '{engFile}' has {engCount} engraved text feature(s), " +
-                            $"'{plainFile}' has none; coarse score {score:F2}";
-                    }
-                    else if (score >= 0.90)
-                    {
-                        cls = PartClassification.ExactGeometryMatch;
-                        reason = $"Coarse score {score:F2}";
-                    }
-                    else
-                    {
-                        cls = PartClassification.PossibleMatch;
-                        reason = $"Coarse score {score:F2}";
-                    }
-                }
+                PartClassification cls = verdict.Cls;
+                string reason = verdict.Reason;
+                string comparatorVersion = verdict.ComparatorVersion;
 
                 // Whether either file is a STEP — SW COM stages must be skipped for these.
                 bool hasAnyStep = fpA.SourceFormat == "STEP" || fpB.SourceFormat == "STEP";
 
-                // Stage 3.5: face geometric signature comparison.
-                // Runs whenever both fingerprints carry a FaceGeometricSignature (STEP from P21
-                // parser, SLDPRT from SW COM face enumeration).  Exact sorted-descriptor match →
-                // ExactGeometryMatch; same face count but differing parameters → PossibleMatch.
-                // For SLDPRT-SLDPRT pairs Stage 4 may still upgrade/downgrade this result.
-                if (!isBinaryDup
-                    && fpA.FaceGeometricSignature != null && fpB.FaceGeometricSignature != null)
-                {
-                    var (sigCls, sigReason) = CompareStepFaceSignatures(fpA, fpB, score);
-                    cls = sigCls;
-                    reason = sigReason;
-                    comparatorVersion = "face-sig-1";
-                    logger.LogDebug("Stage 3.5 face-sig result for {A}↔{B}: {Cls}",
-                        sfA?.FileName, sfB?.FileName, cls);
-                }
-
-                // Stage 3.6: STEP-only geometric-evidence vote. When the exact face-signature match
-                // above leaves a STEP-STEP pair as PossibleMatch or Distinct (e.g. radii differ by
-                // export noise), count orientation-invariant signals — real volume, face count,
-                // face-type histogram, tolerant signature. If enough agree, escalate to
-                // PossibleMatch so a human reviews it, with the agreeing signals spelled out in the
-                // reason. It only raises review recall: never a confirmed/auto-merged match, never a
-                // downgrade of an exact/binary/mirror result. STEP has no SW stages (4/4.5/5) to
-                // provide a tolerance net, so this is that net.
-                bool bothStep = fpA.SourceFormat == "STEP" && fpB.SourceFormat == "STEP";
-                if (bothStep && !isBinaryDup && !isMirror
-                    && (cls == PartClassification.PossibleMatch || cls == PartClassification.Distinct))
-                {
-                    var vote = StepGeometryEvidenceVote.Evaluate(fpA, fpB, StepMatchTolerances.Default);
-                    if (vote.Escalate)
-                    {
-                        cls = PartClassification.PossibleMatch;
-                        reason = vote.Reason;
-                        comparatorVersion = "step-evidence-vote-1";
-                        logger.LogDebug("Stage 3.6 STEP evidence vote for {A}↔{B}: {Flags} flags → review",
-                            sfA?.FileName, sfB?.FileName, vote.AgreeingFlags);
-                    }
-                }
+                if (verdict.Engraving is { IsEngraving: true } hit)
+                    logger.LogInformation("Stage 3.7 engraving variant {A}↔{B}: {Reason}",
+                        sfA?.FileName, sfB?.FileName, hit.Reason);
+                else if (verdict.Engraving is { NearMiss: true } nearMiss)
+                    // Only NEAR misses — pairs that genuinely share a box and a volume and differ only
+                    // in face count, yet failed a fine-grained gate. Logging every rejection would mean
+                    // a line for every unrelated STEP pair in the scan and would drown the signal.
+                    // Information, not Debug, because the file logger is capped there — and this line is
+                    // the whole calibration mechanism for MaxCurvedFractionOfAddedFaces, the one
+                    // threshold shipped as a guess rather than a measurement.
+                    logger.LogInformation("Stage 3.7 engraving candidate rejected {A}↔{B}: {Reason}",
+                        sfA?.FileName, sfB?.FileName, nearMiss.Reason);
 
                 // Stage 4: body coincidence — definitive proper-rotation vs reflection test.
                 // Runs for high-score non-binary SLDPRT-SLDPRT pairs to confirm ExactGeometryMatch
@@ -698,6 +663,156 @@ public sealed class ScanOrchestrationService(
         bool wa = PartFeatureFacts.HasHoleWizard(a);
         bool wb = PartFeatureFacts.HasHoleWizard(b);
         return (wa != wb, wa);
+    }
+
+    /// <summary>
+    /// The verdict of the pure-geometry portion of the classification ladder, plus the engraving
+    /// detector's own result so the caller can log a hit or a near miss without re-running it.
+    /// </summary>
+    internal sealed record GeometryVerdict(
+        PartClassification Cls,
+        string Reason,
+        string ComparatorVersion,
+        StepEngravingDetector.Result? Engraving = null);
+
+    /// <summary>
+    /// The classification ladder up to (but excluding) the SolidWorks COM stages: the initial verdict,
+    /// then Stage 3.5 (face signature), 3.6 (STEP evidence vote) and 3.7 (STEP engraving). Pure and
+    /// synchronous — no COM, no I/O, no DI — so the ladder's ordering and its guards are directly
+    /// testable. Stages 4/4.5/5, the material-variant reclassification and the hole-spec verdict stay
+    /// in <see cref="RunScanAsync"/>, since they need the COM comparators.
+    /// </summary>
+    internal static GeometryVerdict ClassifyGeometrySignals(
+        PartFingerprint fpA, PartFingerprint fpB, double score,
+        string nameA, string nameB,
+        bool isBinaryDup, bool isMirror, string? mirrorReason,
+        StepMatchTolerances? stepTol = null,
+        StepEngravingTolerances? engravingTol = null)
+    {
+        stepTol ??= StepMatchTolerances.Default;
+        engravingTol ??= StepEngravingTolerances.Default;
+
+        PartClassification cls;
+        string reason;
+        string comparatorVersion = "coarse-1";
+
+        if (isBinaryDup)
+        {
+            cls = PartClassification.BinaryDuplicate;
+            reason = "SHA-256 match";
+        }
+        else if (isMirror)
+        {
+            cls = PartClassification.MirrorOrHandedVariant;
+            reason = mirrorReason!;
+        }
+        else
+        {
+            // Primary: suppression-based comparison (requires suppression to succeed).
+            var (isSuppressedEngraving, suppEngReason) =
+                DetectEngravingVariantBySuppressedGeometry(fpA, fpB);
+            if (isSuppressedEngraving)
+            {
+                cls = PartClassification.EngravingVariant;
+                reason = suppEngReason!;
+            }
+            // Fallback: suppression failed or wasn't attempted, but the SketchTextCutCount
+            // field tells us one part has a text-sketch feature and the other doesn't.
+            // A text engraving (CutExtrusion) removes material and adds faces, which lowers
+            // the coarse score — so use a lower threshold than ExactGeometryMatch.
+            else if ((fpA.SketchTextCutCount > 0) != (fpB.SketchTextCutCount > 0) && score >= 0.60)
+            {
+                cls = PartClassification.EngravingVariant;
+                var (engFile, engCount, plainFile) = fpA.SketchTextCutCount > 0
+                    ? (nameA, fpA.SketchTextCutCount, nameB)
+                    : (nameB, fpB.SketchTextCutCount, nameA);
+                reason =
+                    $"Engraving differs: '{engFile}' has {engCount} engraved text feature(s), " +
+                    $"'{plainFile}' has none; coarse score {score:F2}";
+            }
+            else if (score >= 0.90)
+            {
+                cls = PartClassification.ExactGeometryMatch;
+                reason = $"Coarse score {score:F2}";
+            }
+            else
+            {
+                cls = PartClassification.PossibleMatch;
+                reason = $"Coarse score {score:F2}";
+            }
+        }
+
+        // Stage 3.5: face geometric signature comparison.
+        // Runs whenever both fingerprints carry a FaceGeometricSignature (STEP from the P21 parser,
+        // SLDPRT from the SW COM face enumeration). Exact sorted-descriptor match → ExactGeometryMatch;
+        // same face count but differing parameters → PossibleMatch; different face count → Distinct.
+        // For SLDPRT-SLDPRT pairs Stage 4 may still upgrade/downgrade this result.
+        //
+        // The !isMirror and EngravingVariant guards mirror Stages 4 and 4.5, and are NOT optional —
+        // without them this stage silently destroyed both verdicts. A face descriptor encodes surface
+        // type/axis/radius but NOT position, and CanonicalizeAxis additionally erases the axis SIGN:
+        //   • Mirror — a part chiral only by hole PLACEMENT yields byte-identical sorted descriptors,
+        //     so this stage returned ExactGeometryMatch. Stages 4/4.5 are gated !isMirror and so never
+        //     ran to correct it, and a left/right-handed pair was presented as a CONFIRMED match — a
+        //     false automatic merge, the one thing this tool must never do.
+        //   • Engraving — an engraved part has a different face count, so this stage returned Distinct,
+        //     overwriting the EngravingVariant the suppression detector had just established and
+        //     hiding the pair from the UI entirely (Distinct groups are filtered out).
+        if (!isBinaryDup && !isMirror
+            && cls != PartClassification.EngravingVariant
+            && fpA.FaceGeometricSignature != null && fpB.FaceGeometricSignature != null)
+        {
+            var (sigCls, sigReason) = CompareStepFaceSignatures(fpA, fpB, score);
+            cls = sigCls;
+            reason = sigReason;
+            comparatorVersion = "face-sig-1";
+        }
+
+        // Stage 3.6: STEP-only geometric-evidence vote. When the exact face-signature match above
+        // leaves a STEP-STEP pair as PossibleMatch or Distinct (e.g. radii differ by export noise),
+        // count orientation-invariant signals — real volume, face count, face-type histogram, tolerant
+        // signature. If enough agree, escalate to PossibleMatch so a human reviews it, with the
+        // agreeing signals spelled out in the reason. It only raises review recall: never a
+        // confirmed/auto-merged match, never a downgrade of an exact/binary/mirror result. STEP has no
+        // SW stages (4/4.5/5) to provide a tolerance net, so this is that net.
+        bool bothStep = fpA.SourceFormat == "STEP" && fpB.SourceFormat == "STEP";
+        if (bothStep && !isBinaryDup && !isMirror
+            && (cls == PartClassification.PossibleMatch || cls == PartClassification.Distinct))
+        {
+            var vote = StepGeometryEvidenceVote.Evaluate(fpA, fpB, stepTol);
+            if (vote.Escalate)
+            {
+                cls = PartClassification.PossibleMatch;
+                reason = vote.Reason;
+                comparatorVersion = "step-evidence-vote-1";
+            }
+        }
+
+        // Stage 3.7: STEP engraving variant. STEP has no feature tree, so both SLDPRT engraving checks
+        // above are structurally dead for it — and an engraving adds hundreds of faces, which Stage 3.5
+        // reads as Distinct and Stage 3.6's vote structurally cannot rescue (three of its four flags
+        // are face-count-sensitive, so an engraved pair can raise at most one). The engraved twin
+        // therefore vanishes from the UI. Recognise it from geometry instead: same box, volume barely
+        // moved, far more faces, and every one of the base part's faces still present.
+        //
+        // Runs after 3.6 so that when the vote has already escalated Distinct → PossibleMatch, this
+        // refines it to the more specific label. Both are IsMatch() edges landing in a NeedsReview
+        // cluster, so this never confirms and never auto-merges — it only makes an invisible pair
+        // visible, correctly named.
+        StepEngravingDetector.Result? engraving = null;
+        if (bothStep && !isBinaryDup && !isMirror
+            && (cls == PartClassification.Distinct || cls == PartClassification.PossibleMatch))
+        {
+            engraving = StepEngravingDetector.Detect(fpA, fpB, engravingTol);
+            if (engraving.IsEngraving)
+            {
+                cls = PartClassification.EngravingVariant;
+                reason = $"{engraving.Reason}; coarse score {score:F2}";
+                comparatorVersion = "step-engraving-1";
+            }
+        }
+
+        return new GeometryVerdict(cls, reason, comparatorVersion, engraving);
     }
 
     // Compares sorted FaceGeometricSignature lists for a STEP-STEP pair.

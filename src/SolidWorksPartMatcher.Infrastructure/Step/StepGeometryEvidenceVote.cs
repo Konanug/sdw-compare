@@ -63,53 +63,10 @@ internal static class StepGeometryEvidenceVote
     // Greedy multiset pairing: each A-face is matched to at most one B-face whose shape key
     // (surface type + non-radius params) is identical and whose radii are all within relative
     // tolerance. Returns matched / max(faceCountA, faceCountB) — 0 when either signature is missing.
+    // The exact key retains the axis: this vote compares two whole parts that should be in the same
+    // frame, so an axis disagreement is real evidence, not export noise.
     private static double SignatureMatchFraction(
         IReadOnlyList<string>? sigA, IReadOnlyList<string>? sigB, StepMatchTolerances tol)
-    {
-        if (sigA is null || sigB is null || sigA.Count == 0 || sigB.Count == 0) return 0.0;
-
-        // Bucket B's faces by shape key so we only compare radii against same-type/same-axis faces.
-        var bByKey = new Dictionary<string, List<(double[] Radii, bool Used)>>(StringComparer.Ordinal);
-        foreach (var d in sigB)
-        {
-            var (key, radii) = StepGeometryEstimator.ParseDescriptor(d);
-            if (!bByKey.TryGetValue(key, out var list))
-                bByKey[key] = list = [];
-            list.Add((radii, false));
-        }
-
-        int matched = 0;
-        foreach (var d in sigA)
-        {
-            var (key, radii) = StepGeometryEstimator.ParseDescriptor(d);
-            if (!bByKey.TryGetValue(key, out var candidates)) continue;
-
-            for (int i = 0; i < candidates.Count; i++)
-            {
-                if (candidates[i].Used) continue;
-                if (RadiiWithinTolerance(radii, candidates[i].Radii, tol.RadiusRelativeTolerance))
-                {
-                    candidates[i] = (candidates[i].Radii, true);
-                    matched++;
-                    break;
-                }
-            }
-        }
-
-        int denom = Math.Max(sigA.Count, sigB.Count);
-        return denom == 0 ? 0.0 : (double)matched / denom;
-    }
-
-    private static bool RadiiWithinTolerance(double[] a, double[] b, double relTol)
-    {
-        if (a.Length != b.Length) return false;
-        for (int i = 0; i < a.Length; i++)
-        {
-            if (double.IsNaN(a[i]) || double.IsNaN(b[i])) return false;
-            double max = Math.Max(Math.Abs(a[i]), Math.Abs(b[i]));
-            if (max == 0) continue; // both zero → equal
-            if (Math.Abs(a[i] - b[i]) / max > relTol) return false;
-        }
-        return true;
-    }
+        => FaceSignatureMatcher.AgreementFraction(
+            sigA, sigB, FaceSignatureMatcher.ExactKey, tol.RadiusRelativeTolerance);
 }
